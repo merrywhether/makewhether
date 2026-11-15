@@ -5,7 +5,7 @@
 	"type": "module",
 	"packageManager": "pnpm@12.5.1",
 	"scripts": {
-		"lint": "biome check --error-on-warnings . && node scripts/check-package-graph.cjs && depcruise 'packages/**/*.{ts,mts,cts,js,mjs,cjs}' --config .dependency-cruiser.cjs",
+		"lint": "biome check --error-on-warnings . && node scripts/check-package-graph.cjs && depcruise packages --config .dependency-cruiser.cjs",
 		"typecheck": "tsc --project tsconfig.json && moon run :typecheck",
 		"test": "vitest run"
 	},

@@ -1,0 +1,547 @@
+import type { Routes } from "@makewhether/domain";
+import { createEffectActor, sendAndAwait } from "@xstate/effect";
+import { Effect, References } from "effect";
+import { TestClock } from "effect/testing";
+import { expect, test } from "vitest";
+import { Workers } from "../src/runner.ts";
+import { workspace } from "../src/workspace.ts";
+import { createWorld } from "./workers.ts";
+
+const worker = {
+	account: "account",
+	model: "model",
+	harness: "codex",
+} as const;
+const tier = { tier: "worker", workers: [worker] as const, rules: {} };
+const routes: Routes = {
+	implement: [tier],
+	verify: [tier],
+	judge: [tier],
+	intervene: [tier],
+};
+
+test("reserved-looking unit IDs can be held and resolve dependencies", async () => {
+	const world = createWorld((input) => ({
+		duration: 10,
+		event: {
+			type: "runner.report",
+			outcome: {
+				kind: "done",
+				verdict: input.spec.phase === "implement" ? "done" : "pass",
+				detail: "ok",
+			},
+		},
+	}));
+	const result = await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			yield* sendAndAwait(actor, {
+				type: "hold.add",
+				hold: { id: "pause", mode: "hard", scope: { kind: "all" } },
+			});
+			for (const id of ["constructor", "__proto__"]) {
+				yield* sendAndAwait(actor, {
+					type: "unit.add",
+					id,
+					repo: "repo",
+					title: id,
+					deps: id === "__proto__" ? ["constructor"] : [],
+					routes,
+					maxRounds: 2,
+					interventionCap: 2,
+				});
+			}
+			expect(actor.getSnapshot().status).toBe("active");
+			expect(
+				actor
+					.getSnapshot()
+					.children["unit:constructor"]?.getSnapshot()
+					.children.task?.getSnapshot().value,
+			).toBe("held");
+			expect(
+				actor.getSnapshot().children["unit:__proto__"]?.getSnapshot().value,
+			).toBe("queued");
+			expect(world.processes).toHaveLength(0);
+			yield* sendAndAwait(actor, { type: "hold.lift", holdId: "pause" });
+			for (let step = 0; step < 100; step++) {
+				const finished = actor.getSnapshot().context.finished;
+				if (
+					getResult(finished, "constructor") === "passed" &&
+					getResult(finished, "__proto__") === "passed"
+				)
+					return finished;
+				yield* TestClock.adjust(10);
+			}
+			throw new Error("reserved-looking IDs did not finish");
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, world.workers),
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(References.MinimumLogLevel, "Warn"),
+		),
+	);
+	expect(getResult(result, "constructor")).toBe("passed");
+	expect(getResult(result, "__proto__")).toBe("passed");
+	const predecessor = world.processes.find(
+		(item) =>
+			item.input.spec.taskId.startsWith("constructor/") &&
+			item.input.spec.phase === "judge",
+	);
+	const dependent = world.processes.find((item) =>
+		item.input.spec.taskId.startsWith("__proto__/"),
+	);
+	expect(predecessor).toBeDefined();
+	expect(dependent?.started).toBeGreaterThanOrEqual(
+		predecessor?.ended ?? Number.POSITIVE_INFINITY,
+	);
+});
+
+function getResult(results: Readonly<Record<string, string>>, id: string) {
+	return results[id];
+}
+
+test.each([
+	["omitted", {}, 2],
+	["undefined", { attemptLimit: undefined }, 2],
+	["explicit", { attemptLimit: 3 }, 3],
+] as const)(
+	"%s attempt limit handles lost runs",
+	async (_name, limit, expected) => {
+		const world = createWorld(() => ({
+			duration: 10,
+			event: { type: "runner.failed", reason: "lost", detail: "lost" },
+		}));
+		const person = {
+			account: "person",
+			model: "person",
+			harness: "person",
+		} as const;
+		const testRoutes: Routes = {
+			...routes,
+			intervene: [{ tier: "person", workers: [person], rules: {} }],
+		};
+		const result = await Effect.runPromise(
+			Effect.gen(function* () {
+				const actor = yield* createEffectActor(workspace);
+				yield* sendAndAwait(actor, {
+					type: "unit.add",
+					id: "U",
+					repo: "repo",
+					title: "U",
+					deps: [],
+					routes: testRoutes,
+					maxRounds: 2,
+					interventionCap: 2,
+					...limit,
+				});
+				for (let step = 0; step < 30; step++) {
+					const current = actor
+						.getSnapshot()
+						.children["unit:U"]?.getSnapshot()
+						.children.task?.getSnapshot();
+					if (current?.value === "asking") return current.value;
+					yield* TestClock.adjust(10);
+				}
+				throw new Error("unit did not exhaust its attempts");
+			}).pipe(
+				Effect.scoped,
+				Effect.provideService(Workers, world.workers),
+				Effect.provide(TestClock.layer()),
+				Effect.provideService(References.MinimumLogLevel, "Warn"),
+			),
+		);
+		expect(result).toBe("asking");
+		expect(
+			world.processes.filter((item) => item.input.spec.phase === "implement"),
+		).toHaveLength(expected);
+	},
+);
+
+test("a person's cancellation cascades through queued and later dependents, while passed dependencies release work", async () => {
+	const person = {
+		account: "person",
+		model: "person",
+		harness: "person",
+	} as const;
+	const testRoutes: Routes = {
+		...routes,
+		intervene: [{ tier: "person", workers: [person], rules: {} }],
+	};
+	const world = createWorld((input) => {
+		const passing =
+			input.spec.taskId.startsWith("P/") || input.spec.taskId.startsWith("Q/");
+		return {
+			duration: 10,
+			event: {
+				type: "runner.report",
+				outcome: passing
+					? {
+							kind: "done",
+							verdict: input.spec.phase === "implement" ? "done" : "pass",
+							detail: "ok",
+						}
+					: { kind: "failed", detail: "blocked" },
+			},
+		};
+	});
+	const result = await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			for (const [id, deps] of [
+				["D", []],
+				["A", ["D"]],
+				["B", ["D"]],
+				["C", ["A", "B"]],
+				["P", []],
+			] as const) {
+				yield* sendAndAwait(actor, {
+					type: "unit.add",
+					id,
+					repo: "repo",
+					title: id,
+					deps,
+					routes: testRoutes,
+					maxRounds: 2,
+					interventionCap: 2,
+				});
+			}
+			let answered = false;
+			let added = false;
+			for (let step = 0; step < 200; step++) {
+				const root = actor.getSnapshot();
+				const ask = root.children["unit:D"]
+					?.getSnapshot()
+					.children.task?.getSnapshot();
+				if (!answered && ask?.value === "asking") {
+					yield* sendAndAwait(actor, {
+						type: "task.answer",
+						taskId: ask.context.spec.taskId,
+						outcome: {
+							kind: "done",
+							verdict: "decision",
+							decision: { kind: "cancel" },
+						},
+					});
+					answered = true;
+				}
+				if (
+					!added &&
+					root.context.finished.D === "cancelled" &&
+					root.context.finished.P === "passed"
+				) {
+					yield* sendAndAwait(actor, {
+						type: "unit.add",
+						id: "L",
+						repo: "repo",
+						title: "L",
+						deps: ["D"],
+						routes: testRoutes,
+						maxRounds: 2,
+						interventionCap: 2,
+					});
+					yield* sendAndAwait(actor, {
+						type: "unit.add",
+						id: "Q",
+						repo: "repo",
+						title: "Q",
+						deps: ["P"],
+						routes: testRoutes,
+						maxRounds: 2,
+						interventionCap: 2,
+					});
+					added = true;
+				}
+				if (Object.keys(root.context.finished).length === 7)
+					return root.context;
+				yield* TestClock.adjust(10);
+			}
+			throw new Error("cascade did not settle");
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, world.workers),
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(References.MinimumLogLevel, "Warn"),
+		),
+	);
+	expect(result.finished).toEqual({
+		D: "cancelled",
+		A: "cancelled",
+		B: "cancelled",
+		C: "cancelled",
+		L: "cancelled",
+		P: "passed",
+		Q: "passed",
+	});
+	expect(result.cancellationReasons.A).toBe("D");
+	expect(result.cancellationReasons.B).toBe("D");
+	expect(["A", "B"]).toContain(result.cancellationReasons.C);
+	expect(result.cancellationReasons.L).toBe("D");
+	expect(
+		world.processes.some((process) =>
+			process.input.spec.taskId.startsWith("Q/"),
+		),
+	).toBe(true);
+	expect(
+		world.processes.some((process) =>
+			/^(A|B|C|L)\//.test(process.input.spec.taskId),
+		),
+	).toBe(false);
+});
+
+test("agent cancel escalates with analysis; the selected person may cancel", async () => {
+	const person = {
+		account: "person",
+		model: "person",
+		harness: "person",
+	} as const;
+	const testRoutes: Routes = {
+		...routes,
+		intervene: [
+			{ tier: "mixed", workers: [worker, person], rules: {} },
+			{ tier: "person", workers: [person], rules: {} },
+		],
+	};
+	const world = createWorld((input) => ({
+		duration: 10,
+		event: {
+			type: "runner.report",
+			outcome:
+				input.spec.phase === "intervene"
+					? {
+							kind: "done",
+							verdict: "decision",
+							decision: { kind: "cancel", analysis: "unsafe to continue" },
+						}
+					: { kind: "failed", detail: "blocked" },
+		},
+	}));
+	const result = await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			yield* sendAndAwait(actor, {
+				type: "unit.add",
+				id: "U",
+				repo: "repo",
+				title: "U",
+				deps: [],
+				routes: testRoutes,
+				maxRounds: 2,
+				interventionCap: 2,
+			});
+			yield* sendAndAwait(actor, {
+				type: "unit.add",
+				id: "dependent",
+				repo: "repo",
+				title: "dependent",
+				deps: ["U"],
+				routes: testRoutes,
+				maxRounds: 2,
+				interventionCap: 2,
+			});
+			let answered = false;
+			for (let step = 0; step < 30; step++) {
+				const current = actor
+					.getSnapshot()
+					.children["unit:U"]?.getSnapshot()
+					.children.task?.getSnapshot();
+				if (current?.value === "asking" && !answered) {
+					expect(current.context.worker?.harness).toBe("person");
+					expect(actor.getSnapshot().context.finished.U).toBeUndefined();
+					expect(
+						actor.getSnapshot().context.finished.dependent,
+					).toBeUndefined();
+					expect(
+						actor.getSnapshot().children["unit:dependent"]?.getSnapshot().value,
+					).toBe("queued");
+					expect(current.context.spec.prior).toEqual({
+						tier: "mixed",
+						outcome: {
+							kind: "done",
+							verdict: "decision",
+							decision: { kind: "cancel", analysis: "unsafe to continue" },
+						},
+					});
+					yield* sendAndAwait(actor, {
+						type: "task.answer",
+						taskId: current.context.spec.taskId,
+						outcome: {
+							kind: "done",
+							verdict: "decision",
+							decision: { kind: "cancel" },
+						},
+					});
+					answered = true;
+				}
+				const finished = actor.getSnapshot().context.finished;
+				if (finished.U === "cancelled" && finished.dependent === "cancelled") {
+					expect(answered).toBe(true);
+					return finished;
+				}
+				yield* TestClock.adjust(10);
+			}
+			throw new Error("person decision did not finish");
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, world.workers),
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(References.MinimumLogLevel, "Warn"),
+		),
+	);
+	expect(result).toEqual({ U: "cancelled", dependent: "cancelled" });
+	expect(
+		world.processes.find((process) => process.input.spec.phase === "intervene")
+			?.input.worker.harness,
+	).toBe("codex");
+});
+
+test("an intervene route without a person cannot cancel", async () => {
+	const world = createWorld((input) => ({
+		duration: 10,
+		event: {
+			type: "runner.report",
+			outcome:
+				input.spec.phase === "intervene"
+					? {
+							kind: "done",
+							verdict: "decision",
+							decision: { kind: "cancel", analysis: "recommend cancel" },
+						}
+					: { kind: "failed", detail: "blocked" },
+		},
+	}));
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			yield* sendAndAwait(actor, {
+				type: "unit.add",
+				id: "U",
+				repo: "repo",
+				title: "U",
+				deps: [],
+				routes,
+				maxRounds: 2,
+				interventionCap: 2,
+			});
+			yield* TestClock.adjust(50);
+			expect(actor.getSnapshot().context.finished.U).toBeUndefined();
+			expect(actor.getSnapshot().children["unit:U"]?.getSnapshot().value).toBe(
+				"intervene",
+			);
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, world.workers),
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(References.MinimumLogLevel, "Warn"),
+		),
+	);
+	expect(
+		world.processes.filter(
+			(process) => process.input.spec.phase === "intervene",
+		).length,
+	).toBeGreaterThan(1);
+});
+
+test("cancel authority follows the selected person in a mixed fallback tier", async () => {
+	const person = {
+		account: "person",
+		model: "person",
+		harness: "person",
+	} as const;
+	const starter = {
+		account: "local",
+		model: "shell",
+		harness: "shell",
+	} as const;
+	const testRoutes: Routes = {
+		...routes,
+		implement: [{ tier: "start", workers: [starter], rules: {} }],
+		intervene: [{ tier: "mixed", workers: [worker, person], rules: {} }],
+	};
+	const world = createWorld(() => ({
+		duration: 10,
+		event: {
+			type: "runner.report",
+			outcome: { kind: "failed", detail: "blocked" },
+		},
+	}));
+	const result = await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			yield* sendAndAwait(actor, {
+				type: "hold.add",
+				hold: {
+					id: "account",
+					mode: "hard",
+					scope: { kind: "account", account: worker.account },
+				},
+			});
+			yield* sendAndAwait(actor, {
+				type: "unit.add",
+				id: "U",
+				repo: "repo",
+				title: "U",
+				deps: [],
+				routes: testRoutes,
+				maxRounds: 2,
+				interventionCap: 2,
+			});
+			for (let step = 0; step < 20; step++) {
+				const current = actor
+					.getSnapshot()
+					.children["unit:U"]?.getSnapshot()
+					.children.task?.getSnapshot();
+				if (current?.value === "asking") {
+					expect(current.context.worker?.harness).toBe("person");
+					yield* sendAndAwait(actor, {
+						type: "task.answer",
+						taskId: current.context.spec.taskId,
+						outcome: {
+							kind: "done",
+							verdict: "decision",
+							decision: { kind: "cancel" },
+						},
+					});
+				}
+				if (actor.getSnapshot().context.finished.U)
+					return actor.getSnapshot().context.finished.U;
+				yield* TestClock.adjust(10);
+			}
+			throw new Error("fallback person did not finish");
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, world.workers),
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(References.MinimumLogLevel, "Warn"),
+		),
+	);
+	expect(result).toBe("cancelled");
+});
+
+test("manual hold lift cancels its timer before the id is reused", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			yield* sendAndAwait(actor, {
+				type: "hold.request",
+				holdId: "reused",
+				scope: { kind: "all" },
+				at: 0,
+				resetsAt: 100,
+			});
+			yield* TestClock.adjust(10);
+			yield* sendAndAwait(actor, { type: "hold.lift", holdId: "reused" });
+			yield* sendAndAwait(actor, {
+				type: "hold.add",
+				hold: { id: "reused", mode: "hard", scope: { kind: "all" } },
+			});
+			yield* TestClock.adjust(100);
+			expect(actor.getSnapshot().context.holds.map((hold) => hold.id)).toEqual([
+				"reused",
+			]);
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, { run: () => Effect.void }),
+			Effect.provide(TestClock.layer()),
+		),
+	);
+});

@@ -1,15 +1,23 @@
 const allowed = require("./.package-graph.cjs");
 
 module.exports = {
-	forbidden: Object.entries(allowed).map(([name, dependencies]) => ({
-		name: `${name}-dependencies`,
-		severity: "error",
-		from: { path: `^packages/${name}/` },
-		to: {
-			path: "^(packages/|@makewhether/)[^/]+(/|$)",
-			pathNot: `^(packages/|@makewhether/)(${[name, ...dependencies].join("|")})(/|$)`,
+	forbidden: [
+		{
+			name: "pure-packages-no-node",
+			severity: "error",
+			from: { path: "^packages/(domain|machines)/src/" },
+			to: { dependencyTypes: ["core"] },
 		},
-	})),
+		...Object.entries(allowed).map(([name, dependencies]) => ({
+			name: `${name}-dependencies`,
+			severity: "error",
+			from: { path: `^packages/${name}/` },
+			to: {
+				path: "^(packages/|@makewhether/)[^/]+(/|$)",
+				pathNot: `^(packages/|@makewhether/)(${[name, ...dependencies].join("|")})(/|$)`,
+			},
+		})),
+	],
 	options: {
 		tsConfig: { fileName: "tsconfig.json" },
 		tsPreCompilationDeps: true,
