@@ -246,6 +246,7 @@ export const RunnerInput = Schema.Struct({
 export type RunnerInput = typeof RunnerInput.Type;
 export type RunnerEvent =
 	| { type: "runner.started"; sessionId: string }
+	| { type: "runner.parked" }
 	| { type: "runner.report"; outcome: WorkerReport }
 	| { type: "runner.failed"; reason: "crashed" | "lost"; detail: string }
 	| {
@@ -256,9 +257,16 @@ export type RunnerEvent =
 			at: number;
 	  };
 
-export const LockRecord = Schema.Struct({
-	pid: Schema.Int.check(Schema.isGreaterThan(0)),
+export const ProcessIdentity = Schema.Struct({
+	pid: Schema.Int.check(
+		Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+	),
 	startedAt: Schema.String.check(Schema.isMinLength(1)),
+});
+export type ProcessIdentity = typeof ProcessIdentity.Type;
+
+export const LockRecord = Schema.Struct({
+	...ProcessIdentity.fields,
 	token: Schema.String.check(Schema.isMinLength(1)),
 	port: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 })),
 });
