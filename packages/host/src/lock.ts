@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	linkSync,
@@ -9,34 +8,10 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { LockRecord } from "@makewhether/domain";
+import { getProcessStart, getProcessState } from "@makewhether/runner";
 import { Schema } from "effect";
 
 export type { LockRecord } from "@makewhether/domain";
-
-function getStartTime(pid: number): string | undefined {
-	try {
-		const start = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-			encoding: "utf8",
-			env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-			stdio: ["ignore", "pipe", "ignore"],
-		}).trim();
-		return start || undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function isAlive(owner: LockRecord): boolean {
-	try {
-		process.kill(owner.pid, 0);
-	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ESRCH")
-			return false;
-		return true;
-	}
-	const started = getStartTime(owner.pid);
-	return started === undefined || started === owner.startedAt;
-}
 
 function read(path: string): string | undefined {
 	try {
@@ -50,12 +25,7 @@ function read(path: string): string | undefined {
 
 function parse(raw: string): LockRecord | undefined {
 	try {
-		const owner = Schema.decodeUnknownSync(LockRecord)(JSON.parse(raw));
-		return Number.isSafeInteger(owner.pid) &&
-			owner.pid > 0 &&
-			owner.startedAt.length > 0
-			? owner
-			: undefined;
+		return Schema.decodeUnknownSync(LockRecord)(JSON.parse(raw));
 	} catch {
 		return undefined;
 	}
@@ -78,7 +48,7 @@ function publish(path: string, contents: string): boolean {
 
 function reclaim(path: string, raw: string, owner: LockRecord): boolean {
 	const stale = parse(raw);
-	if (!stale || isAlive(stale)) return false;
+	if (!stale || getProcessState(stale) !== "dead") return false;
 	const digest = createHash("sha256")
 		.update(path)
 		.update("\0")
@@ -107,7 +77,7 @@ export function takeLock(requestedPath: string, port: number) {
 		realpathSync(dirname(requestedPath)),
 		basename(requestedPath),
 	);
-	const startedAt = getStartTime(process.pid);
+	const startedAt = getProcessStart(process.pid);
 	if (!startedAt) throw new Error("cannot determine engine process start time");
 	const owner: LockRecord = {
 		pid: process.pid,
@@ -139,7 +109,7 @@ export function readLock(path: string): LockRecord | undefined {
 
 /** Check the engine process identity recorded in a lock. */
 export function isLockOwnerAlive(owner: LockRecord): boolean {
-	return isAlive(owner);
+	return getProcessState(owner) !== "dead";
 }
 
 /** Verify a live engine's process start identity before signalling it. */
@@ -147,6 +117,6 @@ export function isLockOwnerVerified(owner: LockRecord): boolean {
 	return (
 		Number.isSafeInteger(owner.pid) &&
 		owner.pid > 0 &&
-		getStartTime(owner.pid) === owner.startedAt
+		getProcessState(owner) === "alive"
 	);
 }

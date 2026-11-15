@@ -270,6 +270,15 @@ test("executable drains a pending pause before opening its worker gate", async (
 		for (let i = 0; i < 200 && existsSync(join(inbox, `${id}.json`)); i++)
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(existsSync(join(inbox, `${id}.json`))).toBe(false);
+		for (let i = 0; i < 200; i++) {
+			const current = openStore(join(dataDir, "makew.db"));
+			const started = current
+				.getAudit()
+				.some((entry) => entry.event.includes('"type":"runner.started"'));
+			current.close();
+			if (started) break;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
 		await run(process.execPath, [cli, "stop"], { env });
 		const after = openStore(join(dataDir, "makew.db"));
 		try {
