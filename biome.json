@@ -1,0 +1,10 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.6.7/schema.json",
+	"files": { "includes": ["**", "!!.moon/cache", "!!node_modules"] },
+	"plugins": ["./no-null.grit"],
+	"linter": {
+		"rules": {
+			"preset": "recommended"
+		}
+	}
+}

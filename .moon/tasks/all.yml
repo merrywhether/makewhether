@@ -1,0 +1,5 @@
+tasks:
+  typecheck:
+    command: "tsc --project tsconfig.json"
+    options:
+      cache: false

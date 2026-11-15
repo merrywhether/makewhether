@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+# dependency-cruiser needs the TypeScript 6 JavaScript parser API.
+packageExtensions:
+  "dependency-cruiser@*":
+    dependencies:
+      typescript: "npm:@typescript/typescript6@^6.0.2"

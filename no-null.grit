@@ -1,0 +1,9 @@
+language js
+
+`null` as $null where {
+	not $null <: within or {
+		`$_ == null`,
+		`$_ != null`
+	} until $_,
+	register_diagnostic(span=$null, message="Use undefined, not null. To test for absence, write x == null.")
+}

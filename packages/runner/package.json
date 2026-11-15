@@ -1,0 +1,13 @@
+{
+	"name": "@makewhether/runner",
+	"private": true,
+	"type": "module",
+	"exports": "./src/index.ts",
+	"scripts": {
+		"test": "vitest run --passWithNoTests"
+	},
+	"dependencies": {
+		"@makewhether/domain": "workspace:*",
+		"@makewhether/config": "workspace:*"
+	}
+}
