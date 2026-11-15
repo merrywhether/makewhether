@@ -8,4 +8,9 @@ export { task } from "./task.ts";
 export type { UnitInput } from "./unit.ts";
 export { unit } from "./unit.ts";
 export { readStuckUnitContext } from "./unit-logic.ts";
-export { validateWorkspaceEvent, workspace } from "./workspace.ts";
+export {
+	readUnits,
+	unitMachineNames,
+	validateWorkspaceEvent,
+	workspace,
+} from "./workspace.ts";
