@@ -3,4 +3,4 @@ export { runner, Workers } from "./runner.ts";
 export { task } from "./task.ts";
 export type { UnitInput } from "./unit.ts";
 export { unit } from "./unit.ts";
-export { workspace } from "./workspace.ts";
+export { validateWorkspaceEvent, workspace } from "./workspace.ts";

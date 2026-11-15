@@ -31,6 +31,8 @@ export const Tier = Schema.Struct({
 	tier: TierName,
 	workers: Schema.NonEmptyArray(Worker),
 	rules: Schema.Record(Schema.String, Schema.Literals(["up", "final"])),
+	effort: Schema.optional(Schema.String),
+	timeLimitMs: Schema.optional(Schema.Number),
 });
 export type Tier = typeof Tier.Type;
 
@@ -158,6 +160,8 @@ export const TaskSpec = Schema.Struct({
 	notes: Schema.Array(Schema.String),
 	prior: Schema.Unknown,
 	attemptLimit: Schema.Number,
+	effort: Schema.optional(Schema.String),
+	timeLimitMs: Schema.optional(Schema.Number),
 });
 export type TaskSpec = typeof TaskSpec.Type;
 
@@ -186,3 +190,72 @@ export const UnitDecisionEvent = Schema.Struct({
 	decision: Decision,
 });
 export type UnitDecisionEvent = typeof UnitDecisionEvent.Type;
+
+export const InboxCommand = Schema.Union([
+	Schema.Struct({
+		type: Schema.Literal("unit.add"),
+		id: Schema.optional(Schema.String),
+		brief: Schema.String,
+		machine: Schema.String,
+		repo: Schema.String,
+		dependencies: Schema.Array(Schema.String),
+	}),
+	Schema.Struct({
+		type: Schema.Literal("task.answer"),
+		taskId: Schema.String,
+		outcome: Outcome,
+	}),
+	Schema.Struct({
+		type: Schema.Literal("hold.add"),
+		kind: Schema.Literal("pause"),
+		mode: Schema.Literals(["soft", "hard"]),
+		scope: HoldScope,
+	}),
+	Schema.Struct({ type: Schema.Literal("hold.lift"), holdId: Schema.String }),
+]);
+export type InboxCommand = typeof InboxCommand.Type;
+
+export const UnitAddEvent = Schema.Struct({
+	id: UnitId,
+	repo: Schema.String,
+	title: Schema.String,
+	deps: Schema.Array(UnitId),
+	routes: Routes,
+	maxRounds: Schema.Number,
+	interventionCap: Schema.Number,
+	attemptLimit: Schema.Number,
+});
+export const TaskAnswerEvent = Schema.Struct({
+	taskId: Schema.String,
+	outcome: Outcome,
+});
+export const HoldAddEvent = Schema.Struct({ hold: Hold });
+export const HoldLiftEvent = Schema.Struct({ holdId: Schema.String });
+
+export const RunnerInput = Schema.Struct({
+	key: Schema.String,
+	run: Schema.Number,
+	spec: TaskSpec,
+	worker: Worker,
+	resume: Schema.UndefinedOr(Schema.String),
+});
+export type RunnerInput = typeof RunnerInput.Type;
+export type RunnerEvent =
+	| { type: "runner.started"; sessionId: string }
+	| { type: "runner.report"; outcome: WorkerReport }
+	| { type: "runner.failed"; reason: "crashed" | "lost"; detail: string }
+	| {
+			type: "runner.limit";
+			holdId: string;
+			scope: HoldScope;
+			resetsAt: number;
+			at: number;
+	  };
+
+export const LockRecord = Schema.Struct({
+	pid: Schema.Int.check(Schema.isGreaterThan(0)),
+	startedAt: Schema.String.check(Schema.isMinLength(1)),
+	token: Schema.String.check(Schema.isMinLength(1)),
+	port: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 })),
+});
+export type LockRecord = typeof LockRecord.Type;

@@ -7,10 +7,16 @@
 		"test": "node ../../scripts/test.mjs --passWithNoTests"
 	},
 	"dependencies": {
+		"@makewhether/config": "workspace:*",
 		"@makewhether/domain": "workspace:*",
 		"@makewhether/machines": "workspace:*",
+		"@makewhether/runner": "workspace:*",
 		"@makewhether/store": "workspace:*",
-		"@makewhether/config": "workspace:*",
-		"@makewhether/runner": "workspace:*"
+		"@xstate/effect": "1.0.0-beta.1",
+		"effect": "^4.1.4",
+		"xstate": "6.0.0-beta.2"
+	},
+	"bin": {
+		"makew-engine": "./src/main.ts"
 	}
 }

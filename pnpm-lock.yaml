@@ -189,12 +189,21 @@ importers:
       '@makewhether/domain':
         specifier: workspace:*
         version: link:../domain
+      effect:
+        specifier: ^4.1.4
+        version: 4.1.4
+      ulid:
+        specifier: ^3.0.2
+        version: 3.0.2
 
   packages/config:
     dependencies:
       '@makewhether/domain':
         specifier: workspace:*
         version: link:../domain
+      effect:
+        specifier: ^4.1.4
+        version: 4.1.4
 
   packages/domain:
     dependencies:
@@ -219,6 +228,15 @@ importers:
       '@makewhether/store':
         specifier: workspace:*
         version: link:../store
+      '@xstate/effect':
+        specifier: 1.0.0-beta.1
+        version: 1.0.0-beta.1(effect@4.1.4)(xstate@6.0.0-beta.2)
+      effect:
+        specifier: ^4.1.4
+        version: 4.1.4
+      xstate:
+        specifier: 6.0.0-beta.2
+        version: 6.0.0-beta.2
 
   packages/machines:
     dependencies:
@@ -243,6 +261,9 @@ importers:
       '@makewhether/domain':
         specifier: workspace:*
         version: link:../domain
+      effect:
+        specifier: ^4.1.4
+        version: 4.1.4
 
   packages/store:
     dependencies:
@@ -956,6 +977,10 @@ packages:
     engines: {node: '>=16.20.0'}
     hasBin: true
 
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
+    hasBin: true
+
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
@@ -1592,6 +1617,8 @@ snapshots:
       '@typescript/typescript-sunos-x64': 7.0.2
       '@typescript/typescript-win32-arm64': 7.0.2
       '@typescript/typescript-win32-x64': 7.0.2
+
+  ulid@3.0.2: {}
 
   undici-types@8.9.0: {}
 

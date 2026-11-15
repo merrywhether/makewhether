@@ -261,6 +261,8 @@ export function taskInput(
 			notes: context.notes,
 			prior: input.prior,
 			attemptLimit: context.attemptLimit,
+			effort: step.effort,
+			timeLimitMs: step.timeLimitMs,
 		},
 	};
 }
