@@ -7,7 +7,8 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
+		"@makewhether/config": "workspace:*",
 		"@makewhether/domain": "workspace:*",
-		"@makewhether/config": "workspace:*"
+		"effect": "^4.1.4"
 	}
 }

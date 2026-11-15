@@ -1,6 +1,13 @@
-import { Hold, Outcome, Routes } from "@makewhether/domain";
+import {
+	Hold,
+	HoldAddEvent,
+	HoldLiftEvent,
+	TaskAnswerEvent,
+	UnitAddEvent,
+} from "@makewhether/domain";
 import { setupEffect } from "@xstate/effect";
 import { Schema } from "effect";
+import type { EventFrom, SnapshotFrom } from "xstate";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
 
@@ -9,20 +16,6 @@ const UnitRef = Schema.Struct({
 	deps: Schema.Array(Schema.String),
 });
 const Result = Schema.Literals(["passed", "cancelled"]);
-
-const unitFields = {
-	id: Schema.String,
-	repo: Schema.String,
-	title: Schema.String,
-	deps: Schema.Array(Schema.String),
-	routes: Routes,
-	maxRounds: Schema.Number,
-	interventionCap: Schema.Number,
-};
-const UnitAdd = Schema.Union([
-	Schema.Struct({ ...unitFields, attemptLimit: Schema.Number }),
-	Schema.Struct(unitFields),
-]);
 
 export const workspace = setupEffect({
 	schemas: {
@@ -33,16 +26,16 @@ export const workspace = setupEffect({
 			holds: Schema.Array(Hold),
 		}),
 		events: {
-			"unit.add": UnitAdd,
+			"unit.add": UnitAddEvent,
 			"unit.finished": Schema.Struct({
 				unit: Schema.String,
 				verdict: Result,
 				reason: Schema.UndefinedOr(Schema.String),
 			}),
 			"hold.request": HoldRequest,
-			"hold.add": Schema.Struct({ hold: Hold }),
-			"hold.lift": Schema.Struct({ holdId: Schema.String }),
-			"task.answer": Schema.Struct({ taskId: Schema.String, outcome: Outcome }),
+			"hold.add": HoldAddEvent,
+			"hold.lift": HoldLiftEvent,
+			"task.answer": TaskAnswerEvent,
 		},
 		internalEvents: { "hold.expire": Schema.Struct({ holdId: Schema.String }) },
 	},
@@ -59,8 +52,6 @@ export const workspace = setupEffect({
 				id: getUnitActorId(event.id),
 				input: {
 					...input,
-					attemptLimit:
-						("attemptLimit" in event ? event.attemptLimit : undefined) ?? 2,
 					holds: context.holds,
 					depsCancelled: event.deps.filter(
 						(dep) => context.finished[dep] === "cancelled",
@@ -180,4 +171,32 @@ function getUnitActorId(id: string) {
 
 function isFinished(verdict: string | undefined) {
 	return verdict === "passed" || verdict === "cancelled";
+}
+
+/** Validate inbox events against the current workspace state. */
+export function validateWorkspaceEvent(
+	snapshot: SnapshotFrom<typeof workspace>,
+	event: EventFrom<typeof workspace>,
+): string | undefined {
+	const context = snapshot.context;
+	if (
+		event.type === "unit.add" &&
+		context.units.some((unit) => unit.id === event.id)
+	)
+		return `duplicate unit ${event.id}`;
+	if (
+		event.type === "hold.lift" &&
+		!context.holds.some((hold) => hold.id === event.holdId)
+	)
+		return `unknown hold ${event.holdId}`;
+	if (event.type === "task.answer") {
+		const found = Object.values(snapshot.children).some((unit) => {
+			const task = unit?.getSnapshot().children.task?.getSnapshot();
+			return (
+				task?.value === "asking" && task.context.spec.taskId === event.taskId
+			);
+		});
+		if (!found) return `unknown waiting task ${event.taskId}`;
+	}
+	return undefined;
 }
