@@ -3,20 +3,36 @@ import { mkdirSync, watch } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { loadSettings } from "@makewhether/config";
+import { readUnits } from "@makewhether/machines";
 import { createProcessWorkers } from "@makewhether/runner";
 import { openStore } from "@makewhether/store";
 import { Effect } from "effect";
+import { checkMachine } from "./check.ts";
 import { openEngine, Workers } from "./engine.ts";
 import { isLockOwnerVerified, readLock, takeLock } from "./lock.ts";
+import { replay } from "./replay.ts";
 
 const version = "0.0.0";
 const [mode, directory, requestedPort] = process.argv.slice(2);
-if (!directory || (mode !== "serve" && mode !== "stop"))
-	throw new Error("usage: engine serve|stop <data directory> [port]");
+if (
+	!directory ||
+	(mode !== "serve" && mode !== "stop" && mode !== "check" && mode !== "replay")
+)
+	throw new Error("usage: engine serve|stop|check|replay <path> [port]");
 const dataDir = resolve(directory);
 const lockPath = join(dataDir, "engine.lock");
 
-if (mode === "stop") {
+if (mode === "replay") {
+	const result = await replay(dataDir, process.env.MAKEW_DATA_DIR);
+	process.stdout.write(`${JSON.stringify(result, undefined, 2)}\n`);
+} else if (mode === "check") {
+	const result = await checkMachine(dataDir, process.env.MAKEW_CONFIG);
+	for (const warning of result.warnings)
+		process.stderr.write(`warning: ${warning}\n`);
+	for (const error of result.errors) process.stderr.write(`error: ${error}\n`);
+	if (result.errors.length) process.exitCode = 1;
+	else process.stdout.write("machine check passed\n");
+} else if (mode === "stop") {
 	const owner = readLock(lockPath);
 	if (!owner || owner.token !== requestedPort || !isLockOwnerVerified(owner))
 		throw new Error("no verified engine owns this data directory");
@@ -25,6 +41,7 @@ if (mode === "stop") {
 	let ready = false;
 	let stopping = false;
 	let wake: (() => void) | undefined;
+	let getUnits: (() => ReturnType<typeof readUnits>) | undefined;
 	const stop = () => {
 		stopping = true;
 		ready = false;
@@ -38,6 +55,30 @@ if (mode === "stop") {
 				"content-type": "application/json",
 			});
 			response.end(JSON.stringify({ dataDir, pid: process.pid, version }));
+		} else if (
+			request.method === "GET" &&
+			request.url?.startsWith("/units") &&
+			ready &&
+			getUnits
+		) {
+			try {
+				const url = new URL(request.url, "http://localhost");
+				const units = getUnits();
+				const id = url.searchParams.get("id");
+				const value =
+					url.pathname === "/units"
+						? id == null
+							? units.filter((unit) => !unit.verdict)
+							: units.find((unit) => unit.id === id)
+						: undefined;
+				response.writeHead(value ? 200 : 404, {
+					"content-type": "application/json",
+				});
+				response.end(JSON.stringify(value ?? { error: "unit not found" }));
+			} catch {
+				response.writeHead(400);
+				response.end("invalid request");
+			}
 		} else {
 			response.writeHead(404);
 			response.end();
@@ -73,6 +114,7 @@ if (mode === "stop") {
 						store,
 						resolveSettings: () => settings,
 					});
+					getUnits = () => readUnits(engine.actor.getSnapshot());
 					let changed = true;
 					const signal = () => {
 						changed = true;
