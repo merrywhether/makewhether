@@ -64,6 +64,7 @@ test("reserved-looking unit IDs can be held and resolve dependencies", async () 
 					routes,
 					maxRounds: 2,
 					interventionCap: 2,
+					attemptLimit: 2,
 				});
 			}
 			expect(actor.getSnapshot().status).toBe("active");
@@ -116,9 +117,8 @@ function getResult(results: Readonly<Record<string, string>>, id: string) {
 }
 
 test.each([
-	["omitted", {}, 2],
-	["undefined", { attemptLimit: undefined }, 2],
-	["explicit", { attemptLimit: 3 }, 3],
+	["two", { attemptLimit: 2 }, 2],
+	["three", { attemptLimit: 3 }, 3],
 ] as const)(
 	"%s attempt limit handles lost runs",
 	async (_name, limit, expected) => {
@@ -218,6 +218,7 @@ test("a person's cancellation cascades through queued and later dependents, whil
 					routes: testRoutes,
 					maxRounds: 2,
 					interventionCap: 2,
+					attemptLimit: 2,
 				});
 			}
 			let answered = false;
@@ -253,6 +254,7 @@ test("a person's cancellation cascades through queued and later dependents, whil
 						routes: testRoutes,
 						maxRounds: 2,
 						interventionCap: 2,
+						attemptLimit: 2,
 					});
 					yield* sendAndAwait(actor, {
 						type: "unit.add",
@@ -263,6 +265,7 @@ test("a person's cancellation cascades through queued and later dependents, whil
 						routes: testRoutes,
 						maxRounds: 2,
 						interventionCap: 2,
+						attemptLimit: 2,
 					});
 					added = true;
 				}
@@ -342,6 +345,7 @@ test("agent cancel escalates with analysis; the selected person may cancel", asy
 				routes: testRoutes,
 				maxRounds: 2,
 				interventionCap: 2,
+				attemptLimit: 2,
 			});
 			yield* sendAndAwait(actor, {
 				type: "unit.add",
@@ -352,6 +356,7 @@ test("agent cancel escalates with analysis; the selected person may cancel", asy
 				routes: testRoutes,
 				maxRounds: 2,
 				interventionCap: 2,
+				attemptLimit: 2,
 			});
 			let answered = false;
 			for (let step = 0; step < 30; step++) {
@@ -455,6 +460,7 @@ test("cancel authority follows the selected person in a mixed fallback tier", as
 				routes: testRoutes,
 				maxRounds: 2,
 				interventionCap: 2,
+				attemptLimit: 2,
 			});
 			for (let step = 0; step < 20; step++) {
 				const current = actor

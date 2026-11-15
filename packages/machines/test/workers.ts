@@ -16,7 +16,10 @@ export type Script = (
 ) => { duration: number; event: RunnerEvent };
 
 /** Make a scripted world whose processes survive a simulated engine crash. */
-export function createWorld(script: Script) {
+export function createWorld(
+	script: Script,
+	options?: { waitForStart?: (input: RunnerInput) => Effect.Effect<void> },
+) {
 	const processes: Process[] = [];
 	const calls: {
 		input: RunnerInput;
@@ -29,7 +32,7 @@ export function createWorld(script: Script) {
 		workers: {
 			run: (input: RunnerInput, emit: (event: RunnerEvent) => void) =>
 				Effect.gen(function* () {
-					const now = yield* Clock.currentTimeMillis;
+					let now = yield* Clock.currentTimeMillis;
 					let process = processes.find((item) => item.input.key === input.key);
 					let mode: "start" | "reattach" | "replay" | "lost";
 					if (process)
@@ -40,6 +43,8 @@ export function createWorld(script: Script) {
 									? "replay"
 									: "reattach";
 					else {
+						if (options?.waitForStart) yield* options.waitForStart(input);
+						now = yield* Clock.currentTimeMillis;
 						const unit = input.spec.taskId.split("/")[0];
 						const prior = processes.filter(
 							(item) =>
