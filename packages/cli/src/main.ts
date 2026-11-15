@@ -104,6 +104,45 @@ if (command === "send") {
 		renameSync(temp, join(inbox, `${id}.json`));
 		process.stdout.write(`${id}\n`);
 	}
+} else if (
+	command === "unit" &&
+	(args[0] === "ls" || (args[0] === "show" && args[1]))
+) {
+	const owner = readEngineLock();
+	if (!owner) throw new Error("no engine owns this data directory");
+	const endpoint =
+		args[0] === "ls"
+			? "/units"
+			: `/units?${new URLSearchParams({ id: args[1] ?? "" })}`;
+	const response = await fetch(`http://127.0.0.1:${owner.port}${endpoint}`, {
+		signal: AbortSignal.timeout(5000),
+	});
+	if (!response.ok) throw new Error(`unit read failed: ${response.status}`);
+	process.stdout.write(
+		`${JSON.stringify(await response.json(), undefined, 2)}\n`,
+	);
+} else if (command === "replay" && args[0]) {
+	const child = spawn(
+		engine.command,
+		[...engine.prefix, "replay", resolve(args[0])],
+		{ stdio: "inherit", env: { ...process.env, MAKEW_DATA_DIR: dataDir } },
+	);
+	const code = await new Promise<number>((resolveCode, reject) => {
+		child.once("error", reject);
+		child.once("exit", (status) => resolveCode(status ?? 1));
+	});
+	if (code !== 0) process.exitCode = code;
+} else if (command === "machine" && args[0] === "check" && args[1]) {
+	const child = spawn(
+		engine.command,
+		[...engine.prefix, "check", resolve(args[1])],
+		{ stdio: "inherit" },
+	);
+	const code = await new Promise<number>((resolveCode, reject) => {
+		child.once("error", reject);
+		child.once("exit", (status) => resolveCode(status ?? 1));
+	});
+	if (code !== 0) process.exitCode = code;
 } else if (command === "start") {
 	mkdirSync(dataDir, { recursive: true });
 	let child: ReturnType<typeof spawn> | undefined;

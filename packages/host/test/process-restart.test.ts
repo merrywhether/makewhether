@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+	cpSync,
 	existsSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -199,6 +201,7 @@ test("a worker killed while engine is down retries once with its recorded sessio
 		const thread = JSON.parse(
 			readFileSync(`${stem}.jsonl`, "utf8").split("\n")[0] ?? "{}",
 		).thread_id;
+
 		expect(first).toBeDefined();
 		expect(retry).toMatchObject({ mode: "resume", resume: thread });
 		expect(
@@ -212,6 +215,22 @@ test("a worker killed while engine is down retries once with its recorded sessio
 					typeof row.startedAt === "string" && getProcessState(row) === "dead",
 			),
 		);
+		const copy = mkdtempSync(join(tmpdir(), "makew-lost-recording-"));
+		try {
+			cpSync(dataDir, copy, { recursive: true });
+			const replayed = JSON.parse((await command("replay", copy)).stdout);
+			expect(replayed.finished).toEqual({ U: "passed" });
+			expect(
+				replayed.starts.find(
+					(row: { key: string }) => row.key === "U/1.implement.fake#2",
+				)?.resume,
+			).toBe(thread);
+			expect(replayed.starts.map((row: { key: string }) => row.key)).toEqual(
+				starts.map((row) => row.key),
+			);
+		} finally {
+			rmSync(copy, { recursive: true, force: true });
+		}
 	} finally {
 		await removeEngineData(dataDir);
 	}
