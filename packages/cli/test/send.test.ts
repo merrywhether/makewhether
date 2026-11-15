@@ -69,6 +69,10 @@ test.each([
 		['["scope","account"]', '["scope","model"]'],
 	],
 	["unknown type", '{"type":"typo"}', ['["type"]']],
+	["null", "null", ['["type"]', "Expected a command object"]],
+	["array", "[]", ['["type"]', "Expected a command object"]],
+	["string", '"hello"', ['["type"]', "Expected a command object"]],
+	["number", "42", ['["type"]', "Expected a command object"]],
 	["malformed JSON", "{", ["Invalid JSON:"]],
 ] as const)(
 	"send reports %s without writing a command",

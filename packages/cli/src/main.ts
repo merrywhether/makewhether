@@ -66,15 +66,15 @@ if (command === "send") {
 	try {
 		parsed = JSON.parse(body);
 		// Select the member so invalid literal fields do not hide the other issues in its union.
-		if (typeof parsed === "object" && parsed != null) {
-			if (!("type" in parsed))
-				throw new InvalidCommandType("Missing command type");
-			if (!isCommandType(parsed.type))
-				throw new InvalidCommandType("Unknown command type");
-			Schema.decodeUnknownSync(commandCases[parsed.type], { errors: "all" })(
-				parsed,
-			);
-		} else Schema.decodeUnknownSync(InboxCommand, { errors: "all" })(parsed);
+		if (typeof parsed !== "object" || parsed == null || Array.isArray(parsed))
+			throw new InvalidCommandType("Expected a command object");
+		if (!("type" in parsed))
+			throw new InvalidCommandType("Missing command type");
+		if (!isCommandType(parsed.type))
+			throw new InvalidCommandType("Unknown command type");
+		Schema.decodeUnknownSync(commandCases[parsed.type], { errors: "all" })(
+			parsed,
+		);
 		valid = true;
 	} catch (error) {
 		if (error instanceof SyntaxError)

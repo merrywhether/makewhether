@@ -30,3 +30,7 @@ export function createFakeWorkers() {
 		},
 	};
 }
+
+export type { ProcessIdentity } from "./process.ts";
+export { getProcessStart, getProcessState } from "./process.ts";
+export { createProcessWorkers } from "./workers.ts";
