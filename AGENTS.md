@@ -17,7 +17,8 @@ mise exec -- pnpm test
 ```
 
 Lint treats warnings as errors. CI runs lint and typecheck. Run `pnpm test`
-locally.
+locally. The test command stops the suite after 60 seconds, including when a
+worker blocks its event loop.
 
 ## Packages
 
