@@ -158,7 +158,7 @@ export function createProcessWorkers(options: { dataDir: string }) {
 								type: "runner.limit",
 								holdId: `quota:${input.key}`,
 								scope: { kind: "account", account: input.worker.account },
-								at: now,
+								at: yield* Clock.currentTimeMillis,
 								resetsAt: failure.resetsAt,
 							});
 						else
