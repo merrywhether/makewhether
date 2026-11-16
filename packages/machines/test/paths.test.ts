@@ -81,6 +81,20 @@ const map = getAdjacencyMap(unit, {
 					snapshot.getInputs()["unit.intervene"]?.tier === 1 ? person : worker,
 			},
 		})),
+		...(snapshot.context.stuck
+			? outcomes.flatMap((outcome) =>
+					outcome.kind === "done" && outcome.verdict === "decision"
+						? [
+								{
+									type: "unit.decide" as const,
+									unitId: "U",
+									episode: snapshot.context.stuck?.episode ?? 0,
+									decision: outcome.decision,
+								},
+							]
+						: [],
+				)
+			: []),
 		{ type: "dep.passed" as const, unit: "D" },
 		{ type: "dep.cancelled" as const, unit: "D" },
 		{
@@ -120,6 +134,7 @@ const map = getAdjacencyMap(unit, {
 			snapshot.context.maxRounds,
 			snapshot.context.interventions,
 			snapshot.context.from,
+			snapshot.context.stuck?.episode,
 			snapshot.context.depsPassed,
 			snapshot.context.holds,
 			Object.entries(snapshot.getInputs()).map(([key, value]) => [
@@ -138,6 +153,7 @@ test("unit paths reach each state without errors", () => {
 		"judge",
 		"passed",
 		"queued",
+		"stuck",
 		"verify",
 	]);
 	expect(nodes.filter(({ state }) => state.status === "error")).toEqual([]);

@@ -1,9 +1,16 @@
-import { Hold, Outcome, Routes, UnitId } from "@makewhether/domain";
+import {
+	Hold,
+	Outcome,
+	Routes,
+	UnitDecisionEvent,
+	UnitId,
+} from "@makewhether/domain";
 import { setupEffect } from "@xstate/effect";
 import { Schema } from "effect";
 import { standardSchemaValidator } from "xstate/validation";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
+import { stuckDecisionProblem } from "./unit-logic.ts";
 
 const UnitRef = Schema.Struct({
 	id: Schema.String,
@@ -44,6 +51,7 @@ export const workspace = setupEffect({
 			"hold.request": HoldRequest,
 			"hold.add": Schema.Struct({ hold: Hold }),
 			"hold.lift": Schema.Struct({ holdId: Schema.String }),
+			"unit.decide": UnitDecisionEvent,
 			"task.answer": Schema.Struct({ taskId: Schema.String, outcome: Outcome }),
 		},
 		internalEvents: { "hold.expire": Schema.Struct({ holdId: Schema.String }) },
@@ -155,6 +163,17 @@ export const workspace = setupEffect({
 					holds: context.holds.filter((hold) => hold.id !== event.holdId),
 				},
 			};
+		},
+		"unit.decide": ({ children, event }, enq) => {
+			const id = getUnitActorId(event.unitId);
+			const snapshot = children[id]?.getSnapshot();
+			if (
+				snapshot?.status !== "active" ||
+				snapshot.value !== "stuck" ||
+				stuckDecisionProblem(snapshot.context, event, true)
+			)
+				return;
+			enq.sendTo(id, event);
 		},
 		"task.answer": ({ context, event }, enq) => {
 			for (const id of getActive(context))
