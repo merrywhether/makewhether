@@ -7,6 +7,11 @@
 		"test": "node ../../scripts/test.mjs --passWithNoTests"
 	},
 	"dependencies": {
-		"@makewhether/domain": "workspace:*"
+		"@makewhether/domain": "workspace:*",
+		"effect": "^4.1.4",
+		"ulid": "^3.0.2"
+	},
+	"bin": {
+		"makew": "./src/main.ts"
 	}
 }

@@ -7,6 +7,7 @@
 		"test": "node ../../scripts/test.mjs --passWithNoTests"
 	},
 	"dependencies": {
-		"@makewhether/domain": "workspace:*"
+		"@makewhether/domain": "workspace:*",
+		"effect": "^4.1.4"
 	}
 }

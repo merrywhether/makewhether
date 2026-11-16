@@ -49,6 +49,7 @@ test.each([
 					routes,
 					maxRounds: 2,
 					interventionCap: 2,
+					attemptLimit: 2,
 				});
 				for (let index = 0; index < 20; index++) {
 					const unit = actor.getSnapshot().children["unit:U"]?.getSnapshot();
@@ -108,6 +109,7 @@ test("unsure moves to the next judge tier by default", async () => {
 				routes: testRoutes,
 				maxRounds: 2,
 				interventionCap: 2,
+				attemptLimit: 2,
 			});
 			for (let index = 0; index < 20; index++) {
 				if (actor.getSnapshot().context.finished.U)
@@ -154,6 +156,7 @@ test("intervention at the cap starts at agent; the next starts at person", async
 				routes: testRoutes,
 				maxRounds: 2,
 				interventionCap: 1,
+				attemptLimit: 2,
 			});
 			let answered = false;
 			for (let index = 0; index < 30; index++) {
@@ -218,6 +221,7 @@ test("a stuck episode is taskless and only its matching decision recovers it", a
 				deps: [],
 				routes,
 				maxRounds: 2,
+				attemptLimit: 2,
 				interventionCap: 2,
 			});
 			for (let i = 0; i < 20; i++) {
