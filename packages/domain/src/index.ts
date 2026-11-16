@@ -211,6 +211,10 @@ export const InboxCommand = Schema.Union([
 		outcome: Outcome,
 	}),
 	Schema.Struct({
+		type: Schema.Literal("unit.decide"),
+		...UnitDecisionEvent.fields,
+	}),
+	Schema.Struct({
 		type: Schema.Literal("hold.add"),
 		kind: Schema.Literal("pause"),
 		mode: Schema.Literals(["soft", "hard"]),

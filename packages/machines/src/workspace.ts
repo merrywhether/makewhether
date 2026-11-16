@@ -166,13 +166,7 @@ export const workspace = setupEffect({
 		},
 		"unit.decide": ({ children, event }, enq) => {
 			const id = getUnitActorId(event.unitId);
-			const snapshot = children[id]?.getSnapshot();
-			if (
-				snapshot?.status !== "active" ||
-				snapshot.value !== "stuck" ||
-				stuckDecisionProblem(snapshot.context, event, true)
-			)
-				return;
+			if (unitDecisionError(children[id], event)) return;
 			enq.sendTo(id, event);
 		},
 		"task.answer": ({ context, event }, enq) => {
@@ -195,12 +189,33 @@ function getActive(context: {
 		.filter((id) => !isFinished(context.finished[id]));
 }
 
-function getUnitActorId(id: string) {
-	return `unit:${id}`;
+const unitActorPrefix = "unit:";
+
+export function getUnitActorId(id: string) {
+	return `${unitActorPrefix}${id}`;
+}
+
+export function parseUnitActorId(actorId: string) {
+	return actorId.startsWith(unitActorPrefix)
+		? actorId.slice(unitActorPrefix.length)
+		: undefined;
 }
 
 function isFinished(verdict: string | undefined) {
 	return verdict === "passed" || verdict === "cancelled";
+}
+
+type WorkspaceSnapshot = SnapshotFrom<typeof workspace>;
+
+function unitDecisionError(
+	unit: WorkspaceSnapshot["children"][string] | undefined,
+	event: typeof UnitDecisionEvent.Type,
+): string | undefined {
+	const snapshot = unit?.getSnapshot();
+	if (!snapshot) return `unknown unit ${event.unitId}`;
+	if (snapshot.value !== "stuck" || snapshot.status !== "active")
+		return `unit ${event.unitId} is not stuck`;
+	return stuckDecisionProblem(snapshot.context, event, true);
 }
 
 /** Validate inbox events before applying them to the workspace. */
@@ -210,6 +225,11 @@ export function validateWorkspaceEvent(
 ): string | undefined {
 	const context = snapshot.context;
 	if (event.type === "unit.add") return unitAddError(context.units, event);
+	if (event.type === "unit.decide")
+		return unitDecisionError(
+			snapshot.children[getUnitActorId(event.unitId)],
+			event,
+		);
 	if (
 		event.type === "hold.lift" &&
 		!context.holds.some((hold) => hold.id === event.holdId)
