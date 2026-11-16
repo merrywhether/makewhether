@@ -26,11 +26,9 @@ if (mode === "replay") {
 	const result = await replay(dataDir, process.env.MAKEW_DATA_DIR);
 	process.stdout.write(`${JSON.stringify(result, undefined, 2)}\n`);
 } else if (mode === "check") {
-	const result = await checkMachine(dataDir, process.env.MAKEW_CONFIG);
-	for (const warning of result.warnings)
-		process.stderr.write(`warning: ${warning}\n`);
-	for (const error of result.errors) process.stderr.write(`error: ${error}\n`);
-	if (result.errors.length) process.exitCode = 1;
+	const errors = await checkMachine(dataDir, process.env.MAKEW_CONFIG);
+	for (const error of errors) process.stderr.write(`error: ${error}\n`);
+	if (errors.length) process.exitCode = 1;
 	else process.stdout.write("machine check passed\n");
 } else if (mode === "stop") {
 	const owner = readLock(lockPath);

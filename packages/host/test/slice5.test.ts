@@ -20,6 +20,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { getUnitSettings } from "@makewhether/config";
+import { Workers, workspace } from "@makewhether/machines";
+import { openStore } from "@makewhether/store";
+import { createEffectActor, sendAndAwait } from "@xstate/effect";
+import { Effect } from "effect";
 import { expect, test } from "vitest";
 import { readLock } from "../src/lock.ts";
 
@@ -136,34 +140,60 @@ test("CLI replays a completed recording from a relocated copy", async () => {
 	}
 }, 20000);
 
-test("unit HTTP and CLI reads support dot IDs and reject bad paths without crashing", async () => {
+test("unit HTTP and CLI reads support restored dot IDs and reject bad paths without crashing", async () => {
 	const root = mkdtempSync(join(tmpdir(), "makew-unit-cli-"));
 	const env = { ...process.env, MAKEW_DATA_DIR: root, MAKEW_ENGINE: host };
 	const command = (...args: string[]) =>
 		exec(process.execPath, [cli, ...args], { env });
 	try {
-		await command("start");
-		await command(
-			"send",
-			JSON.stringify({
-				type: "hold.add",
-				kind: "pause",
-				mode: "hard",
-				scope: { kind: "all" },
-			}),
-		);
-		for (const id of [".", "..", "waiting"])
-			await command(
-				"send",
-				JSON.stringify({
-					type: "unit.add",
-					id,
-					brief: id,
-					machine: "unit",
-					repo: "repo",
-					dependencies: id === "waiting" ? ["."] : [],
+		const snapshot = await Effect.runPromise(
+			Effect.gen(function* () {
+				const actor = yield* createEffectActor(workspace);
+				yield* sendAndAwait(actor, {
+					type: "hold.add",
+					hold: { id: "pause", mode: "hard", scope: { kind: "all" } },
+				});
+				for (const id of [".", ".."])
+					yield* sendAndAwait(actor, {
+						type: "unit.add",
+						id,
+						title: id,
+						machine: "unit",
+						repo: "repo",
+						deps: [],
+						...getUnitSettings(),
+					});
+				return JSON.stringify(actor.getPersistedSnapshot());
+			}).pipe(
+				Effect.scoped,
+				Effect.provideService(Workers, {
+					run: () => Effect.die("unexpected worker"),
 				}),
+			),
+		);
+		const store = openStore(join(root, "makew.db"));
+		try {
+			store.commit(
+				{ machine: workspace.id, version: "1", snapshot, at: Date.now() },
+				[],
 			);
+		} finally {
+			store.close();
+		}
+		await command("start");
+		const add = {
+			type: "unit.add",
+			brief: "waiting",
+			machine: "unit",
+			repo: "repo",
+			dependencies: ["."],
+		};
+		await expect(
+			command("send", JSON.stringify({ ...add, id: "new.id" })),
+		).rejects.toMatchObject({
+			stderr: expect.stringContaining("task ID components cannot contain"),
+		});
+		await command("send", JSON.stringify({ ...add, id: "waiting" }));
 		let units: { id: string; holds: unknown[]; dependencies: string[] }[] = [];
 		for (let i = 0; i < 100; i++) {
 			units = JSON.parse((await command("unit", "ls")).stdout);
@@ -201,7 +231,7 @@ test("unit HTTP and CLI reads support dot IDs and reject bad paths without crash
 	}
 }, 20000);
 
-test("machine check validates waits, handlers, moving up and person warning", async () => {
+test("machine check validates waits, handlers, moving up and the final intervention tier", async () => {
 	const root = mkdtempSync(join(tmpdir(), "makew-check-"));
 	const env = { ...process.env, MAKEW_DATA_DIR: root, MAKEW_ENGINE: host };
 	const command = (...args: string[]) =>
@@ -229,25 +259,42 @@ test("machine check validates waits, handlers, moving up and person warning", as
 				/outer.bad.*move up[\s\S]*outer.missing.*waitsOn[\s\S]*outer.incomplete.*completion route[\s\S]*no intervene/,
 			),
 		});
-		const settings = join(root, "settings.ts");
 		const original = getUnitSettings();
-		writeFileSync(
-			settings,
-			`export default ${JSON.stringify({ ...original, routes: { ...original.routes, intervene: original.routes.implement } })};`,
-		);
-		const warning = await exec(
-			process.execPath,
-			[
-				cli,
-				"machine",
-				"check",
-				join(import.meta.dirname, "../../machines/src/unit.ts"),
-			],
-			{ env: { ...env, MAKEW_CONFIG: settings } },
-		);
-		expect(warning.stderr).toContain(
-			"intervene route does not end with a person",
-		);
+		const agent = original.routes.implement[0];
+		const person = original.routes.intervene[0];
+		const machine = join(import.meta.dirname, "../../machines/src/unit.ts");
+		const checkWithSettings = (name: string, final: typeof person) => {
+			const settings = join(root, `${name}.ts`);
+			writeFileSync(
+				settings,
+				`export default ${JSON.stringify({
+					...original,
+					routes: { ...original.routes, intervene: [agent, final] },
+				})};`,
+			);
+			return exec(process.execPath, [cli, "machine", "check", machine], {
+				env: { ...env, MAKEW_CONFIG: settings },
+			});
+		};
+		await expect(checkWithSettings("agent-only", agent)).rejects.toMatchObject({
+			code: 1,
+			stderr: expect.stringContaining(
+				"error: final intervention tier must contain only person workers",
+			),
+		});
+		await expect(
+			checkWithSettings("mixed", {
+				...person,
+				workers: [...agent.workers, ...person.workers],
+			}),
+		).rejects.toMatchObject({
+			code: 1,
+			stderr: expect.stringContaining(
+				"error: final intervention tier must contain only person workers",
+			),
+		});
+		const valid = await checkWithSettings("person-only", person);
+		expect(valid.stdout).toContain("machine check passed");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

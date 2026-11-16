@@ -67,10 +67,10 @@ export async function checkMachine(file: string, settingsPath?: string) {
 	}
 	visit(machine.config.states);
 	if (!intervention) errors.push("machine has no intervene phase");
-	const settings = await loadSettings(settingsPath);
-	const last = settings.routes.intervene.at(-1);
-	const warnings = last?.workers.some((worker) => worker.harness === "person")
-		? []
-		: ["intervene route does not end with a person"];
-	return { errors, warnings };
+	try {
+		await loadSettings(settingsPath);
+	} catch (error) {
+		errors.push(error instanceof Error ? error.message : String(error));
+	}
+	return errors;
 }
