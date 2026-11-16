@@ -7,7 +7,7 @@
 	"scripts": {
 		"lint": "biome check --error-on-warnings . && node scripts/check-package-graph.cjs && depcruise packages --config .dependency-cruiser.cjs",
 		"typecheck": "tsc --project tsconfig.json && moon run :typecheck",
-		"test": "vitest run"
+		"test": "node scripts/test.mjs"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.7",
