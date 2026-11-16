@@ -7,11 +7,23 @@ const State = Schema.Struct({
 	type: Schema.optional(Schema.String),
 	meta: Schema.optional(Schema.Unknown),
 	invoke: Schema.optional(Schema.Unknown),
+	after: Schema.optional(Schema.Unknown),
+	on: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 	states: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
 const Machine = Schema.Struct({
 	config: Schema.Struct({ states: Schema.Record(Schema.String, State) }),
 });
+
+function hasTransition(transition: unknown) {
+	return (
+		typeof transition === "function" ||
+		typeof transition === "string" ||
+		(typeof transition === "object" &&
+			transition != null &&
+			Object.keys(transition).length > 0)
+	);
+}
 
 /** Check declared waits and phase routing on a TypeScript machine module. */
 export async function checkMachine(file: string, settingsPath?: string) {
@@ -36,6 +48,14 @@ export async function checkMachine(file: string, settingsPath?: string) {
 				continue;
 			}
 			if (meta.phase === "intervene") intervention = true;
+			if (meta.waitsOn === "person") {
+				if (meta.role || meta.phase || state.invoke || state.after)
+					errors.push(
+						`${name}: person wait must have no role, invocation or timer`,
+					);
+				if (!hasTransition(state.on?.["unit.decide"]))
+					errors.push(`${name}: person wait has no unit.decide route`);
+			}
 			if (meta.role || meta.phase) {
 				if (!meta.role || !meta.phase)
 					errors.push(`${name}: role phases require role and phase`);
@@ -51,14 +71,7 @@ export async function checkMachine(file: string, settingsPath?: string) {
 						!("onDone" in invocation)
 					)
 						return false;
-					const transition = invocation.onDone;
-					return (
-						typeof transition === "function" ||
-						typeof transition === "string" ||
-						(typeof transition === "object" &&
-							transition != null &&
-							Object.keys(transition).length > 0)
-					);
+					return hasTransition(invocation.onDone);
 				});
 				if (!completes)
 					errors.push(`${name}: role phase has no task completion route`);

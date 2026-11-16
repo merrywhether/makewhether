@@ -91,6 +91,11 @@ process identity, zombie classification, raw evidence, and host clock selection.
       checks that every unfinished unit has a task, a dependency, or a hold at
       each settled step. The person handling an intervention can preview all
       unfinished units that a cancellation would reach.
+- [x] A stuck unit has no task. Unit reads show its episode, reason, last
+      outcome when available, and downstream dependents. Use the episode from
+      the read when deciding how to recover. For example,
+      `makew unit decide <id> <episode> '{"kind":"resume"}'` resumes work.
+      Replay verifies any units still stuck at the recording checkpoint.
 - [x] `makew machine check <file>` checks waiting-state metadata and role
       routing, requires an intervention phase, and rejects settings whose final
       intervention tier includes a non-person worker.

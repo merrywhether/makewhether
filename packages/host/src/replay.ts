@@ -12,12 +12,17 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import {
 	type RunnerEvent,
 	type RunnerInput,
 	WorkerReport,
 } from "@makewhether/domain";
-import { Workers, workspace } from "@makewhether/machines";
+import {
+	readCheckpointStuckUnits,
+	Workers,
+	workspace,
+} from "@makewhether/machines";
 import { createEffectActor, sendAndAwait } from "@xstate/effect";
 import { Clock, Effect, Schema } from "effect";
 import { TestClock } from "effect/testing";
@@ -314,7 +319,12 @@ export async function replay(recording: string, liveDir?: string) {
 					yield* Effect.promise(
 						() => new Promise<void>((resolve) => setImmediate(resolve)),
 					);
-				return actor.getSnapshot().context.finished;
+				return {
+					finished: actor.getSnapshot().context.finished,
+					stuck: readCheckpointStuckUnits(
+						JSON.parse(JSON.stringify(actor.getPersistedSnapshot())),
+					),
+				};
 			}).pipe(
 				Effect.scoped,
 				Effect.provideService(Workers, workers),
@@ -324,10 +334,14 @@ export async function replay(recording: string, liveDir?: string) {
 		if (replayError) throw replayError;
 		const expected = object(context.finished);
 		if (
-			Object.keys(result).length !== Object.keys(expected).length ||
-			Object.entries(result).some(([key, value]) => expected[key] !== value)
+			Object.keys(result.finished).length !== Object.keys(expected).length ||
+			Object.entries(result.finished).some(
+				([key, value]) => expected[key] !== value,
+			)
 		)
 			throw new Error("replay outcomes differ from recording");
+		if (!isDeepStrictEqual(result.stuck, readCheckpointStuckUnits(snapshot)))
+			throw new Error("replay stuck units differ from recording");
 		if (
 			started.length !== starts.length ||
 			started.some((item) => !starts.some((entry) => entry.key === item.key))
@@ -350,7 +364,7 @@ export async function replay(recording: string, liveDir?: string) {
 			)
 		)
 			throw new Error("replay timing differs from recording");
-		return { finished: result, starts: started, answers: answered };
+		return { ...result, starts: started, answers: answered };
 	} finally {
 		const copy = join(temp, "recording");
 		if (existsSync(copy)) writableDirectories(copy);
