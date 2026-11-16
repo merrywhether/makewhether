@@ -5,7 +5,6 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
-	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +15,7 @@ import { getUnitSettings } from "@makewhether/config";
 import { getProcessState } from "@makewhether/runner";
 import { expect, test } from "vitest";
 import { readLock } from "../src/lock.ts";
+import { removeEngineData } from "./engine-data.ts";
 
 const exec = promisify(execFile);
 const cli = join(import.meta.dirname, "../../cli/src/main.ts");
@@ -58,42 +58,6 @@ function asking(dir: string): boolean {
 	} finally {
 		db.close();
 	}
-}
-function cleanup(dataDir: string): void {
-	const engine = readLock(join(dataDir, "engine.lock"));
-	if (engine && getProcessState(engine) === "alive") {
-		try {
-			process.kill(engine.pid, "SIGKILL");
-		} catch {}
-	}
-	const runs = join(dataDir, "runs");
-	if (existsSync(runs)) {
-		for (const name of readdirSync(runs).filter((item) =>
-			item.endsWith(".pid"),
-		)) {
-			const owner = JSON.parse(readFileSync(join(runs, name), "utf8"));
-			if (getProcessState(owner) === "alive") {
-				try {
-					process.kill(-owner.pid, "SIGKILL");
-				} catch {}
-			}
-		}
-		const log = join(runs, "runs.jsonl");
-		if (existsSync(log))
-			for (const line of readFileSync(log, "utf8").trim().split("\n")) {
-				const row = JSON.parse(line);
-				if (
-					row.type === "start" &&
-					typeof row.startedAt === "string" &&
-					getProcessState(row) === "alive"
-				) {
-					try {
-						process.kill(row.pid, "SIGKILL");
-					} catch {}
-				}
-			}
-	}
-	rmSync(dataDir, { recursive: true, force: true });
 }
 const add = {
 	type: "unit.add",
@@ -182,7 +146,7 @@ test("two engine crashes preserve a quota timer and a down-time person answer", 
 			),
 		);
 	} finally {
-		cleanup(dataDir);
+		await removeEngineData(dataDir);
 	}
 }, 20000);
 
@@ -249,7 +213,7 @@ test("a worker killed while engine is down retries once with its recorded sessio
 			),
 		);
 	} finally {
-		cleanup(dataDir);
+		await removeEngineData(dataDir);
 	}
 }, 20000);
 
@@ -295,6 +259,6 @@ test("clean stop leaves an active worker alive and the next engine reattaches", 
 		expect(starts).toHaveLength(1);
 		await command("stop");
 	} finally {
-		cleanup(dataDir);
+		await removeEngineData(dataDir);
 	}
 }, 20000);

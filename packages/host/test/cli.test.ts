@@ -12,9 +12,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getUnitSettings } from "@makewhether/config";
+import { getProcessState } from "@makewhether/runner";
 import { openStore } from "@makewhether/store";
 import { expect, test } from "vitest";
 import { readLock } from "../src/lock.ts";
+import { recordedWorkers, removeEngineData } from "./engine-data.ts";
 
 const run = promisify(execFile);
 const cli = join(import.meta.dirname, "../../cli/src/main.ts");
@@ -82,13 +84,7 @@ test.each(["configured executable", "PATH shell shim"])(
 				"Error",
 			);
 		} finally {
-			const lock = readLock(join(dataDir, "engine.lock"));
-			if (lock) {
-				try {
-					process.kill(lock.pid, "SIGKILL");
-				} catch {}
-			}
-			rmSync(dataDir, { recursive: true, force: true });
+			await removeEngineData(dataDir);
 		}
 	},
 );
@@ -96,7 +92,13 @@ test.each(["configured executable", "PATH shell shim"])(
 test("engine loads configured limits into recorded unit events and rejects invalid config", async () => {
 	const dataDir = mkdtempSync(join(tmpdir(), "makew-config-cli-"));
 	const file = join(dataDir, "settings.ts");
-	const settings = { ...getUnitSettings(), maxRounds: 7, attemptLimit: 4 };
+	const defaults = getUnitSettings();
+	const settings = {
+		...defaults,
+		maxRounds: 7,
+		attemptLimit: 4,
+		routes: { ...defaults.routes, implement: defaults.routes.intervene },
+	};
 	writeFileSync(file, `export default ${JSON.stringify(settings)};`);
 	const env = {
 		...process.env,
@@ -159,13 +161,7 @@ test("engine loads configured limits into recorded unit events and rejects inval
 		).rejects.toThrow();
 		expect(readLock(join(dataDir, "engine.lock"))).toBeUndefined();
 	} finally {
-		const lock = readLock(join(dataDir, "engine.lock"));
-		if (lock) {
-			try {
-				process.kill(lock.pid, "SIGKILL");
-			} catch {}
-		}
-		rmSync(dataDir, { recursive: true, force: true });
+		await removeEngineData(dataDir);
 	}
 });
 
@@ -243,7 +239,12 @@ test("executable drains a pending pause before opening its worker gate", async (
 		...process.env,
 		MAKEW_DATA_DIR: dataDir,
 		MAKEW_ENGINE: join(import.meta.dirname, "../src/main.ts"),
+		MAKEW_FAKE_PLAN: JSON.stringify({
+			"U/1.implement.fake#1": { delayMs: 10_000 },
+			"U/1.implement.fake#2": { delayMs: 10_000 },
+		}),
 	};
+	let worker: ReturnType<typeof recordedWorkers>[number] | undefined;
 	try {
 		await run(process.execPath, [cli, "start"], { env });
 		await run(process.execPath, [cli, "stop"], { env });
@@ -280,6 +281,8 @@ test("executable drains a pending pause before opening its worker gate", async (
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		}
 		await run(process.execPath, [cli, "stop"], { env });
+		[worker] = recordedWorkers(dataDir);
+		expect(worker && getProcessState(worker)).toBe("alive");
 		const after = openStore(join(dataDir, "makew.db"));
 		try {
 			expect(
@@ -292,14 +295,9 @@ test("executable drains a pending pause before opening its worker gate", async (
 			after.close();
 		}
 	} finally {
-		const lock = readLock(join(dataDir, "engine.lock"));
-		if (lock) {
-			try {
-				process.kill(lock.pid, "SIGKILL");
-			} catch {}
-		}
-		rmSync(dataDir, { recursive: true, force: true });
+		await removeEngineData(dataDir);
 	}
+	expect(worker && getProcessState(worker)).toBe("dead");
 });
 
 test("stop waits until the signalled owner's lock is released", async () => {
