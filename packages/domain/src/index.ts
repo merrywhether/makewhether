@@ -198,7 +198,7 @@ export const InboxCommand = Schema.Union([
 		brief: Schema.String,
 		machine: Schema.String,
 		repo: Schema.String,
-		dependencies: Schema.Array(Schema.String),
+		dependencies: Schema.Array(UnitId),
 	}),
 	Schema.Struct({
 		type: Schema.Literal("task.answer"),
