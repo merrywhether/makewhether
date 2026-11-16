@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Routes } from "@makewhether/domain";
+import { NamedRoutes } from "@makewhether/domain";
 import { Schema } from "effect";
 
 const worker = { harness: "codex", model: "fake", account: "fake" } as const;
@@ -12,7 +12,16 @@ const person = {
 const tier = { tier: "fake", workers: [worker] as const, rules: {} };
 
 export const UnitSettings = Schema.Struct({
-	routes: Routes,
+	routes: NamedRoutes.check(
+		Schema.makeFilter(({ intervene }) =>
+			intervene.at(-1)?.workers.every((worker) => worker.harness === "person")
+				? undefined
+				: {
+						path: ["intervene"],
+						issue: "final intervention tier must contain only person workers",
+					},
+		),
+	),
 	maxRounds: Schema.Int.check(Schema.isGreaterThan(0)),
 	interventionCap: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 	attemptLimit: Schema.Int.check(Schema.isGreaterThan(0)),

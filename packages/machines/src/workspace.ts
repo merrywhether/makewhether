@@ -3,6 +3,7 @@ import {
 	Hold,
 	HoldAddEvent,
 	HoldLiftEvent,
+	NamedRoutes,
 	TaskAnswerEvent,
 	UnitAddEvent,
 	UnitDecisionEvent,
@@ -203,17 +204,21 @@ function isFinished(verdict: string | undefined) {
 	return verdict === "passed" || verdict === "cancelled";
 }
 
-/** Validate inbox events against the current workspace state. */
+const isUnitId = Schema.is(UnitId);
+const hasValidTierNames = Schema.is(NamedRoutes);
+
+/** Validate inbox events before applying them to the workspace. */
 export function validateWorkspaceEvent(
 	snapshot: SnapshotFrom<typeof workspace>,
 	event: EventFrom<typeof workspace>,
 ): string | undefined {
 	const context = snapshot.context;
-	if (
-		event.type === "unit.add" &&
-		context.units.some((unit) => unit.id === event.id)
-	)
-		return `duplicate unit ${event.id}`;
+	if (event.type === "unit.add") {
+		if (!isUnitId(event.id)) return "unit ID cannot contain /, . or #";
+		if (!hasValidTierNames(event.routes))
+			return "unit routes must have tier names without /, . or #";
+		return unitAddError(context.units, event);
+	}
 	if (
 		event.type === "hold.lift" &&
 		!context.holds.some((hold) => hold.id === event.holdId)
