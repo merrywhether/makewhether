@@ -1,0 +1,31 @@
+language: en-US
+reviews:
+  profile: assertive
+  auto_review:
+    enabled: true
+    drafts: false
+  poem: false
+  in_progress_fortune: false
+  suggested_reviewers: false
+  suggested_labels: false
+  path_filters:
+    - "!pnpm-lock.yaml"
+  finishing_touches:
+    unit_tests:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+  tools:
+    biome:
+      enabled: false
+knowledge_base:
+  learnings:
+    scope: local
+  code_guidelines:
+    filePatterns:
+      - files: .agents/review.md
+        applyTo: "**/*"
