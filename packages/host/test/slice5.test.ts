@@ -536,3 +536,142 @@ test("legacy loss matching stops at the next task for the same unit", async () =
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("CLI restores and replays stuck units, then resumes one and cancels another", async () => {
+	const root = mkdtempSync(join(tmpdir(), "makew-stuck-replay-"));
+	const dataDir = join(root, "live");
+	const recording = join(root, "recording");
+	const resumed = join(root, "recovered");
+	const config = join(root, "settings.mjs");
+	writeFileSync(
+		config,
+		`export default ${JSON.stringify({
+			...getUnitSettings(),
+			attemptLimit: 1,
+		})}`,
+	);
+	const env = {
+		...process.env,
+		MAKEW_DATA_DIR: dataDir,
+		MAKEW_ENGINE: host,
+		MAKEW_CONFIG: config,
+		MAKEW_FAKE_PLAN: JSON.stringify({
+			"A/1.implement.fake#1": { outcome: "error" },
+			"B/1.implement.fake#1": { outcome: "error" },
+		}),
+	};
+	const command = (...args: string[]) =>
+		exec(process.execPath, [cli, ...args], { env });
+	const checkpoint = () => {
+		const db = new DatabaseSync(join(dataDir, "makew.db"), { readOnly: true });
+		try {
+			return JSON.parse(
+				String(
+					db.prepare("SELECT snapshot FROM checkpoint WHERE id=1").get()
+						?.snapshot,
+				),
+			);
+		} finally {
+			db.close();
+		}
+	};
+	const unit = (id: string) => checkpoint().children[`unit:${id}`]?.snapshot;
+	const outcome = {
+		kind: "done",
+		verdict: "unsure",
+		detail: "wait for direction",
+	};
+	try {
+		await command("start");
+		for (const id of ["A", "B"]) {
+			await command(
+				"send",
+				JSON.stringify({
+					type: "unit.add",
+					id,
+					brief: id,
+					machine: "small-unit",
+					repo: "repo",
+					dependencies: [],
+				}),
+			);
+			await wait(() => unit(id)?.children.task?.snapshot.value === "asking");
+			await command(
+				"send",
+				JSON.stringify({
+					type: "task.answer",
+					taskId: `${id}/2.intervene.person`,
+					outcome,
+				}),
+			);
+			await wait(() => unit(id)?.value === "stuck");
+		}
+		const read = async (id: string) =>
+			JSON.parse((await command("unit", "show", id)).stdout);
+		const stuck = { episode: 1, reason: "unhandled-intervention", outcome };
+		expect(await read("A")).toMatchObject({ status: "stuck", stuck });
+		await command("stop");
+		cpSync(dataDir, recording, { recursive: true });
+		const before = JSON.parse((await command("replay", recording)).stdout);
+		expect(before.stuck).toEqual(
+			["A", "B"].map((unitId) => ({ unitId, stuck })),
+		);
+		expect(before.finished).toEqual({});
+
+		const db = new DatabaseSync(join(recording, "makew.db"));
+		try {
+			const altered = JSON.parse(
+				String(
+					db.prepare("SELECT snapshot FROM checkpoint WHERE id=1").get()
+						?.snapshot,
+				),
+			);
+			altered.children["unit:A"].snapshot.context.stuck.reason =
+				"invalid-final-tier";
+			db.prepare("UPDATE checkpoint SET snapshot = ? WHERE id=1").run(
+				JSON.stringify(altered),
+			);
+		} finally {
+			db.close();
+		}
+		await expect(command("replay", recording)).rejects.toMatchObject({
+			stderr: expect.stringContaining(
+				"replay stuck units differ from recording",
+			),
+		});
+
+		await command("start");
+		const episode = (await read("A")).stuck.episode;
+		expect(episode).toBe(1);
+		await expect(
+			command("unit", "decide", "A", "0", '{"kind":"resume"}'),
+		).rejects.toMatchObject({
+			stderr: expect.stringContaining('["episode"]'),
+		});
+		await command("unit", "decide", "A", String(episode), '{"kind":"resume"}');
+		await command(
+			"unit",
+			"decide",
+			"B",
+			String((await read("B")).stuck.episode),
+			'{"kind":"cancel"}',
+		);
+		await wait(() => {
+			const { finished } = checkpoint().context;
+			return finished.A === "passed" && finished.B === "cancelled";
+		});
+		await command("stop");
+		cpSync(dataDir, resumed, { recursive: true });
+		const after = JSON.parse((await command("replay", resumed)).stdout);
+		expect(after.stuck).toEqual([]);
+		expect(after.finished).toEqual({ A: "passed", B: "cancelled" });
+	} finally {
+		const owner = readLock(join(dataDir, "engine.lock"));
+		if (owner) {
+			try {
+				process.kill(owner.pid, "SIGKILL");
+			} catch {}
+		}
+		rmSync(root, { recursive: true, force: true });
+	}
+}, 20_000);
