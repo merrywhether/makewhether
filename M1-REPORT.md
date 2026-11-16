@@ -92,8 +92,8 @@ process identity, zombie classification, raw evidence, and host clock selection.
       each settled step. The person handling an intervention can preview all
       unfinished units that a cancellation would reach.
 - [x] `makew machine check <file>` checks waiting-state metadata and role
-      routing, requires intervention, and warns when the last intervention tier
-      lacks a person.
+      routing, requires an intervention phase, and rejects settings whose final
+      intervention tier includes a non-person worker.
 - [x] The smaller TypeScript machine has implement, verify, and intervention
       phases. The same executable runs and restores it alongside the default
       machine.
