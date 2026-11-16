@@ -34,14 +34,24 @@ export const Tier = Schema.Struct({
 });
 export type Tier = typeof Tier.Type;
 
-export const Routes = Schema.Struct({
+export const StructuralRoutes = Schema.Struct({
 	implement: Schema.NonEmptyArray(Tier),
 	verify: Schema.NonEmptyArray(Tier),
 	judge: Schema.NonEmptyArray(Tier),
 	intervene: Schema.NonEmptyArray(Tier),
-}).check(
-	Schema.makeFilter(({ intervene }) =>
-		intervene.at(-1)?.workers.every((worker) => worker.harness === "person")
+});
+export function hasPersonFinalTier(
+	routes: typeof StructuralRoutes.Type,
+): boolean {
+	return (
+		routes.intervene
+			.at(-1)
+			?.workers.every((worker) => worker.harness === "person") ?? false
+	);
+}
+export const Routes = StructuralRoutes.check(
+	Schema.makeFilter((routes) =>
+		hasPersonFinalTier(routes)
 			? undefined
 			: {
 					path: ["intervene"],
@@ -118,6 +128,26 @@ export const Outcome = Schema.Union([
 ]);
 export type Outcome = typeof Outcome.Type;
 
+export const StuckReason = Schema.Literals([
+	"invalid-final-tier",
+	"invalid-unit-identity",
+	"invalid-task-state",
+	"non-person-final-worker",
+	"unhandled-intervention",
+	"unsupported-intervention-phase",
+	"unauthorized-intervention-cancel",
+]);
+export type StuckReason = typeof StuckReason.Type;
+export const StuckEpisode = Schema.Int.check(
+	Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+);
+export const StuckUnit = Schema.Struct({
+	episode: StuckEpisode,
+	reason: StuckReason,
+	outcome: Schema.optional(Outcome),
+});
+export type StuckUnit = typeof StuckUnit.Type;
+
 export const TaskSpec = Schema.Struct({
 	taskId: Schema.String,
 	phase: Phase,
@@ -149,3 +179,10 @@ export function matchesHold(
 			return true;
 	}
 }
+
+export const UnitDecisionEvent = Schema.Struct({
+	unitId: Schema.String,
+	episode: StuckEpisode,
+	decision: Decision,
+});
+export type UnitDecisionEvent = typeof UnitDecisionEvent.Type;
