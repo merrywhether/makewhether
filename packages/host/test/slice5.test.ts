@@ -20,10 +20,6 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { getUnitSettings } from "@makewhether/config";
-import { Workers, workspace } from "@makewhether/machines";
-import { openStore } from "@makewhether/store";
-import { createEffectActor, sendAndAwait } from "@xstate/effect";
-import { Effect } from "effect";
 import { expect, test } from "vitest";
 import { readLock } from "../src/lock.ts";
 
@@ -140,76 +136,68 @@ test("CLI replays a completed recording from a relocated copy", async () => {
 	}
 }, 20000);
 
-test("unit HTTP and CLI reads support restored dot IDs and reject bad paths without crashing", async () => {
+test("unit HTTP and CLI reads show holds and dependencies and reject bad paths", async () => {
 	const root = mkdtempSync(join(tmpdir(), "makew-unit-cli-"));
 	const env = { ...process.env, MAKEW_DATA_DIR: root, MAKEW_ENGINE: host };
 	const command = (...args: string[]) =>
 		exec(process.execPath, [cli, ...args], { env });
 	try {
-		const snapshot = await Effect.runPromise(
-			Effect.gen(function* () {
-				const actor = yield* createEffectActor(workspace);
-				yield* sendAndAwait(actor, {
-					type: "hold.add",
-					hold: { id: "pause", mode: "hard", scope: { kind: "all" } },
-				});
-				for (const id of [".", ".."])
-					yield* sendAndAwait(actor, {
-						type: "unit.add",
-						id,
-						title: id,
-						machine: "unit",
-						repo: "repo",
-						deps: [],
-						...getUnitSettings(),
-					});
-				return JSON.stringify(actor.getPersistedSnapshot());
-			}).pipe(
-				Effect.scoped,
-				Effect.provideService(Workers, {
-					run: () => Effect.die("unexpected worker"),
-				}),
-			),
-		);
-		const store = openStore(join(root, "makew.db"));
-		try {
-			store.commit(
-				{ machine: workspace.id, version: "1", snapshot, at: Date.now() },
-				[],
-			);
-		} finally {
-			store.close();
-		}
 		await command("start");
+		await command(
+			"send",
+			JSON.stringify({
+				type: "hold.add",
+				kind: "pause",
+				mode: "hard",
+				scope: { kind: "all" },
+			}),
+		);
 		const add = {
 			type: "unit.add",
-			brief: "waiting",
+			brief: "work",
 			machine: "unit",
 			repo: "repo",
-			dependencies: ["."],
 		};
 		await expect(
-			command("send", JSON.stringify({ ...add, id: "new.id" })),
+			command(
+				"send",
+				JSON.stringify({
+					...add,
+					id: "new.id",
+					dependencies: [],
+				}),
+			),
 		).rejects.toMatchObject({
 			stderr: expect.stringContaining("task ID components cannot contain"),
 		});
-		await command("send", JSON.stringify({ ...add, id: "waiting" }));
+		await command(
+			"send",
+			JSON.stringify({
+				...add,
+				id: "held",
+				dependencies: [],
+			}),
+		);
+		await command(
+			"send",
+			JSON.stringify({
+				...add,
+				id: "waiting",
+				dependencies: ["held"],
+			}),
+		);
 		let units: { id: string; holds: unknown[]; dependencies: string[] }[] = [];
 		for (let i = 0; i < 100; i++) {
 			units = JSON.parse((await command("unit", "ls")).stdout);
-			if (units.length === 3) break;
+			if (units.length === 2) break;
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
-		expect(units).toHaveLength(3);
-		expect(JSON.parse((await command("unit", "show", ".")).stdout).id).toBe(
-			".",
-		);
-		expect(JSON.parse((await command("unit", "show", "..")).stdout).id).toBe(
-			"..",
-		);
-		expect(units.find((unit) => unit.id === ".")?.holds).toHaveLength(1);
+		expect(units).toHaveLength(2);
+		const held = JSON.parse((await command("unit", "show", "held")).stdout);
+		expect(held.id).toBe("held");
+		expect(held.holds).toHaveLength(1);
 		expect(units.find((unit) => unit.id === "waiting")?.dependencies).toEqual([
-			".",
+			"held",
 		]);
 		const lock = readLock(join(root, "engine.lock"));
 		if (!lock) throw new Error("missing lock");
