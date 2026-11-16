@@ -52,6 +52,7 @@ export const task = setupEffect({
 		context: TaskContext,
 		events: {
 			"runner.started": Schema.Struct({ sessionId: Schema.String }),
+			"runner.parked": Schema.Struct({}),
 			"runner.report": Schema.Struct({ outcome: WorkerReport }),
 			"runner.failed": Schema.Struct({
 				reason: Schema.Literals(["crashed", "lost"]),
@@ -149,6 +150,7 @@ export const task = setupEffect({
 					context: { ...context, outcome: event.outcome },
 				}),
 				"runner.failed": ({ context, event }) => retry(context, event.detail),
+				"runner.parked": () => ({ target: "start" }),
 				"runner.limit": ({ context, event, parent }, enq) => {
 					const { type: _, ...request } = event;
 					enq.sendTo(parent, { type: "hold.request", ...request });

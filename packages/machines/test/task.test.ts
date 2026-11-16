@@ -340,3 +340,43 @@ test("person tasks ignore hard holds before and after asking", async () => {
 		),
 	);
 });
+
+test("a restored parked run preserves the session and crash retry budget", async () => {
+	const starts: RunnerInput[] = [];
+	const outcome = await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(task, {
+				input: { spec, holds: [] },
+			});
+			const snapshot = yield* waitFor(
+				actor,
+				(state) => state.status === "done",
+			);
+			return snapshot.output?.outcome;
+		}).pipe(
+			Effect.scoped,
+			Effect.provideService(Workers, {
+				run: (input, emit) =>
+					Effect.sync(() => {
+						starts.push(input);
+						if (input.run === 1) {
+							emit({ type: "runner.started", sessionId: "session" });
+							emit({ type: "runner.parked" });
+						} else if (input.run === 2)
+							emit({ type: "runner.failed", reason: "lost", detail: "lost" });
+						else
+							emit({
+								type: "runner.report",
+								outcome: { kind: "done", verdict: "done", detail: "finished" },
+							});
+					}),
+			}),
+		),
+	);
+	expect(starts.map(({ run, resume }) => [run, resume])).toEqual([
+		[1, undefined],
+		[2, "session"],
+		[3, "session"],
+	]);
+	expect(outcome).toMatchObject({ kind: "done", verdict: "done" });
+});

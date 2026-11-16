@@ -3,7 +3,7 @@ import { mkdirSync, watch } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { loadSettings } from "@makewhether/config";
-import { createFakeWorkers } from "@makewhether/runner";
+import { createProcessWorkers } from "@makewhether/runner";
 import { openStore } from "@makewhether/store";
 import { Effect } from "effect";
 import { openEngine, Workers } from "./engine.ts";
@@ -62,7 +62,7 @@ if (mode === "stop") {
 		}
 		lock = takeLock(lockPath, address.port);
 		const store = openStore(join(dataDir, "makew.db"));
-		const workers = createFakeWorkers();
+		const workers = createProcessWorkers({ dataDir });
 		try {
 			const settings = await loadSettings(process.env.MAKEW_CONFIG);
 			await Effect.runPromise(
@@ -99,6 +99,7 @@ if (mode === "stop") {
 							changed = false;
 							if (!stopping) yield* engine.drain;
 						}
+						workers.shutdown();
 						engine.close();
 					} finally {
 						clearInterval(timer);
