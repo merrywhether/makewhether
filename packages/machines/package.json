@@ -4,9 +4,12 @@
 	"type": "module",
 	"exports": "./src/index.ts",
 	"scripts": {
-		"test": "vitest run --passWithNoTests"
+		"test": "node ../../scripts/test.mjs --passWithNoTests"
 	},
 	"dependencies": {
-		"@makewhether/domain": "workspace:*"
+		"@makewhether/domain": "workspace:*",
+		"@xstate/effect": "1.0.0-beta.1",
+		"effect": "^4.1.4",
+		"xstate": "6.0.0-beta.2"
 	}
 }
