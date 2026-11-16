@@ -1,8 +1,13 @@
 import type { Routes } from "@makewhether/domain";
-import { createEffectActor, sendAndAwait } from "@xstate/effect";
+import {
+	createEffectActor,
+	EventRejectedError,
+	sendAndAwait,
+} from "@xstate/effect";
 import { Effect, References } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
+import type { EventFrom } from "xstate";
 import { Workers } from "../src/runner.ts";
 import { workspace } from "../src/workspace.ts";
 import { createWorld } from "./workers.ts";
@@ -13,11 +18,21 @@ const worker = {
 	harness: "codex",
 } as const;
 const tier = { tier: "worker", workers: [worker] as const, rules: {} };
+const personWorker = {
+	harness: "person",
+	model: "person",
+	account: "person",
+} as const;
+const personTier = {
+	tier: "person",
+	workers: [personWorker] as const,
+	rules: {},
+};
 const routes: Routes = {
 	implement: [tier],
 	verify: [tier],
 	judge: [tier],
-	intervene: [tier],
+	intervene: [personTier],
 };
 
 test("reserved-looking unit IDs can be held and resolve dependencies", async () => {
@@ -394,53 +409,6 @@ test("agent cancel escalates with analysis; the selected person may cancel", asy
 	).toBe("codex");
 });
 
-test("an intervene route without a person cannot cancel", async () => {
-	const world = createWorld((input) => ({
-		duration: 10,
-		event: {
-			type: "runner.report",
-			outcome:
-				input.spec.phase === "intervene"
-					? {
-							kind: "done",
-							verdict: "decision",
-							decision: { kind: "cancel", analysis: "recommend cancel" },
-						}
-					: { kind: "failed", detail: "blocked" },
-		},
-	}));
-	await Effect.runPromise(
-		Effect.gen(function* () {
-			const actor = yield* createEffectActor(workspace);
-			yield* sendAndAwait(actor, {
-				type: "unit.add",
-				id: "U",
-				repo: "repo",
-				title: "U",
-				deps: [],
-				routes,
-				maxRounds: 2,
-				interventionCap: 2,
-			});
-			yield* TestClock.adjust(50);
-			expect(actor.getSnapshot().context.finished.U).toBeUndefined();
-			expect(actor.getSnapshot().children["unit:U"]?.getSnapshot().value).toBe(
-				"intervene",
-			);
-		}).pipe(
-			Effect.scoped,
-			Effect.provideService(Workers, world.workers),
-			Effect.provide(TestClock.layer()),
-			Effect.provideService(References.MinimumLogLevel, "Warn"),
-		),
-	);
-	expect(
-		world.processes.filter(
-			(process) => process.input.spec.phase === "intervene",
-		).length,
-	).toBeGreaterThan(1);
-});
-
 test("cancel authority follows the selected person in a mixed fallback tier", async () => {
 	const person = {
 		account: "person",
@@ -455,7 +423,10 @@ test("cancel authority follows the selected person in a mixed fallback tier", as
 	const testRoutes: Routes = {
 		...routes,
 		implement: [{ tier: "start", workers: [starter], rules: {} }],
-		intervene: [{ tier: "mixed", workers: [worker, person], rules: {} }],
+		intervene: [
+			{ tier: "mixed", workers: [worker, person], rules: {} },
+			personTier,
+		],
 	};
 	const world = createWorld(() => ({
 		duration: 10,
@@ -595,7 +566,7 @@ test.each([
 	},
 );
 
-test("a delayed quota hold uses the original reset deadline", async () => {
+test("quota holds use the reset deadline relative to the runner report", async () => {
 	await Effect.runPromise(
 		Effect.gen(function* () {
 			const actor = yield* createEffectActor(workspace);
@@ -604,7 +575,7 @@ test("a delayed quota hold uses the original reset deadline", async () => {
 				type: "hold.request",
 				holdId: "quota",
 				scope: { kind: "all" },
-				at: 0,
+				at: 50,
 				resetsAt: 100,
 			});
 			yield* TestClock.adjust(49);
@@ -613,6 +584,164 @@ test("a delayed quota hold uses the original reset deadline", async () => {
 			]);
 			yield* TestClock.adjust(1);
 			expect(actor.getSnapshot().context.holds).toEqual([]);
+		}).pipe(
+			Effect.scoped,
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(Workers, noWorkers),
+		),
+	);
+});
+
+test("direct workspace sends reject invalid IDs, forward dependencies and final tiers", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			const add = {
+				type: "unit.add" as const,
+				id: "A",
+				title: "work",
+				repo: "repo",
+				deps: [],
+				routes,
+				maxRounds: 2,
+				interventionCap: 2,
+				attemptLimit: 2,
+			};
+			const invalid = [
+				{ ...add, id: "A/1.implement.x" },
+				{
+					...add,
+					routes: {
+						...routes,
+						implement: [{ ...tier, tier: "x/1.implement.y" }],
+					},
+				},
+				{ ...add, deps: ["B.C"] },
+				{ ...add, routes: { ...routes, intervene: [tier] } },
+				{
+					...add,
+					routes: {
+						...routes,
+						intervene: [{ ...tier, workers: [worker, personWorker] }],
+					},
+				},
+			] satisfies EventFrom<typeof workspace>[];
+			for (const event of invalid) {
+				const result = yield* Effect.result(sendAndAwait(actor, event));
+				expect(result._tag).toBe("Failure");
+				if (result._tag === "Failure")
+					expect(result.failure).toBeInstanceOf(EventRejectedError);
+			}
+			expect(actor.getSnapshot().context.units).toEqual([]);
+			yield* sendAndAwait(actor, { ...add, deps: ["B"] });
+			expect(actor.getSnapshot().children["unit:A"]?.getSnapshot().value).toBe(
+				"queued",
+			);
+		}).pipe(Effect.scoped, Effect.provideService(Workers, noWorkers)),
+	);
+});
+
+test("a checkpoint after the workspace receives a quota request resumes at the reset", async () => {
+	const world = createWorld((input, prior) => ({
+		duration: 10,
+		event:
+			input.spec.phase === "implement" && prior === 0
+				? {
+						type: "runner.limit",
+						holdId: "quota",
+						scope: { kind: "all" },
+						at: 10,
+						resetsAt: 100,
+					}
+				: {
+						type: "runner.report",
+						outcome: {
+							kind: "done",
+							verdict: input.spec.phase === "implement" ? "done" : "pass",
+							detail: "ok",
+						},
+					},
+	}));
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			type Snapshot = ReturnType<typeof actor.getPersistedSnapshot>;
+			let checkpoint: Snapshot | undefined;
+			let requested = false;
+			actor.inspect((inspection) => {
+				if (
+					inspection.type === "@xstate.transition" &&
+					"id" in inspection.actorRef &&
+					inspection.actorRef.id === workspace.id &&
+					inspection.event.type === "hold.request"
+				)
+					requested = true;
+			});
+			actor.subscribe(() => {
+				if (requested && !checkpoint)
+					checkpoint = JSON.parse(JSON.stringify(actor.getPersistedSnapshot()));
+			});
+			yield* sendAndAwait(actor, {
+				type: "unit.add",
+				id: "A",
+				title: "quota",
+				repo: "repo",
+				deps: [],
+				routes,
+				maxRounds: 2,
+				interventionCap: 2,
+				attemptLimit: 2,
+			});
+			yield* TestClock.adjust(25);
+			if (!checkpoint)
+				throw new Error("quota request checkpoint was not captured");
+			const restored = yield* createEffectActor(workspace, {
+				snapshot: checkpoint,
+			});
+			const task = () =>
+				restored
+					.getSnapshot()
+					.children["unit:A"]?.getSnapshot()
+					.children.task?.getSnapshot();
+			expect(task()?.value).toBe("held");
+			expect(restored.getSnapshot().context.holds.map(({ id }) => id)).toEqual([
+				"quota",
+			]);
+			yield* TestClock.adjust(74);
+			expect(task()?.value).toBe("held");
+			yield* TestClock.adjust(1);
+			expect(restored.getSnapshot().context.holds).toEqual([]);
+			expect(task()?.value).toBe("running");
+		}).pipe(
+			Effect.scoped,
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(Workers, world.workers),
+		),
+	);
+});
+
+test("a quota request immediately followed by a lift leaves no stale expiry", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			actor.send({
+				type: "hold.request",
+				holdId: "quota",
+				scope: { kind: "all" },
+				at: 0,
+				resetsAt: 100,
+			});
+			actor.send({ type: "hold.lift", holdId: "quota" });
+			yield* TestClock.adjust(1);
+			expect(actor.getSnapshot().context.holds).toEqual([]);
+			yield* sendAndAwait(actor, {
+				type: "hold.add",
+				hold: { id: "quota", mode: "soft", scope: { kind: "all" } },
+			});
+			yield* TestClock.adjust(100);
+			expect(actor.getSnapshot().context.holds).toEqual([
+				{ id: "quota", mode: "soft", scope: { kind: "all" } },
+			]);
 		}).pipe(
 			Effect.scoped,
 			Effect.provide(TestClock.layer()),
