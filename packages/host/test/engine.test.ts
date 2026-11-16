@@ -628,7 +628,7 @@ test("the inbox transaction captures child completion and dependent progress", a
 	}
 });
 
-test("archives cycle-closing commands and invalid unit IDs in rejected inbox", async () => {
+test("archives cycle-closing commands and invalid unit references in rejected inbox", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "makew-engine-"));
 	const inbox = join(dir, "inbox");
 	const store = openStore(join(dir, "store.db"));
@@ -642,6 +642,7 @@ test("archives cycle-closing commands and invalid unit IDs in rejected inbox", a
 					{ key: "03-close", id: "B", deps: ["A"] },
 					{ key: "04-invalid-id", id: "invalid.id", deps: [] },
 					{ key: "05-invalid.key", id: undefined, deps: [] },
+					{ key: "06-invalid-dep", id: "D", deps: ["B.C"] },
 				];
 				for (const { key, id, deps } of commands)
 					writeFileSync(
@@ -657,7 +658,8 @@ test("archives cycle-closing commands and invalid unit IDs in rejected inbox", a
 					["01-self", "dependency cycle for unit Self"],
 					["03-close", "dependency cycle for unit B"],
 					["04-invalid-id", "task ID components cannot contain"],
-					["05-invalid.key", "unit ID cannot contain"],
+					["05-invalid.key", "EventRejectedError"],
+					["06-invalid-dep", "task ID components cannot contain"],
 				] as const) {
 					expect(store.getDisposition(key)).toBe("rejected");
 					expect(existsSync(join(inbox, "rejected", `${key}.json`))).toBe(true);
