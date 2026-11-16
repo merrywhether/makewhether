@@ -194,7 +194,7 @@ export type UnitDecisionEvent = typeof UnitDecisionEvent.Type;
 export const InboxCommand = Schema.Union([
 	Schema.Struct({
 		type: Schema.Literal("unit.add"),
-		id: Schema.optional(Schema.String),
+		id: Schema.optional(UnitId),
 		brief: Schema.String,
 		machine: Schema.String,
 		repo: Schema.String,

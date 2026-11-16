@@ -627,3 +627,51 @@ test("the inbox transaction captures child completion and dependent progress", a
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("archives cycle-closing commands and invalid unit IDs in rejected inbox", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "makew-engine-"));
+	const inbox = join(dir, "inbox");
+	const store = openStore(join(dir, "store.db"));
+	try {
+		await Effect.runPromise(
+			Effect.gen(function* () {
+				const engine = yield* openEngine({ inbox, store });
+				const commands = [
+					{ key: "01-self", id: "Self", deps: ["Self"] },
+					{ key: "02-first", id: "A", deps: ["B"] },
+					{ key: "03-close", id: "B", deps: ["A"] },
+					{ key: "04-invalid-id", id: "invalid.id", deps: [] },
+					{ key: "05-invalid.key", id: undefined, deps: [] },
+				];
+				for (const { key, id, deps } of commands)
+					writeFileSync(
+						join(inbox, `${key}.json`),
+						JSON.stringify({ ...add, id, dependencies: deps }),
+					);
+				yield* engine.drain;
+				expect(store.getDisposition("02-first")).toBe("accepted");
+				expect(
+					engine.actor.getSnapshot().context.units.map(({ id }) => id),
+				).toEqual(["A"]);
+				for (const [key, error] of [
+					["01-self", "dependency cycle for unit Self"],
+					["03-close", "dependency cycle for unit B"],
+					["04-invalid-id", "task ID components cannot contain"],
+					["05-invalid.key", "unit ID cannot contain"],
+				] as const) {
+					expect(store.getDisposition(key)).toBe("rejected");
+					expect(existsSync(join(inbox, "rejected", `${key}.json`))).toBe(true);
+					expect(
+						store.getAudit().find((entry) => entry.key === key)?.event,
+					).toContain(error);
+				}
+			}).pipe(
+				Effect.scoped,
+				Effect.provideService(Workers, createFakeWorkers()),
+			),
+		);
+	} finally {
+		store.close();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
