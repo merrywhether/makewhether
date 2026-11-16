@@ -1,12 +1,13 @@
-import { Hold, NamedRoutes, Outcome, UnitId } from "@makewhether/domain";
-import { send, setupEffect } from "@xstate/effect";
-import { Clock, Effect, Schema } from "effect";
+import { Hold, Outcome, Routes, UnitId } from "@makewhether/domain";
+import { setupEffect } from "@xstate/effect";
+import { Schema } from "effect";
+import { standardSchemaValidator } from "xstate/validation";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
 
 const UnitRef = Schema.Struct({
 	id: Schema.String,
-	deps: Schema.Array(Schema.String),
+	deps: Schema.Array(UnitId),
 });
 const Result = Schema.Literals(["passed", "cancelled"]);
 
@@ -14,8 +15,8 @@ const unitFields = {
 	id: UnitId,
 	repo: Schema.String,
 	title: Schema.String,
-	deps: Schema.Array(Schema.String),
-	routes: NamedRoutes,
+	deps: Schema.Array(UnitId),
+	routes: Routes,
 	maxRounds: Schema.Number,
 	interventionCap: Schema.Number,
 };
@@ -24,13 +25,8 @@ const UnitAdd = Schema.Union([
 	Schema.Struct(unitFields),
 ]);
 
-const ScheduleHold = Schema.Struct({
-	holdId: Schema.String,
-	scope: HoldRequest.fields.scope,
-	delay: Schema.Number,
-});
-
 export const workspace = setupEffect({
+	validator: standardSchemaValidator(),
 	schemas: {
 		context: Schema.Struct({
 			units: Schema.Array(UnitRef),
@@ -46,26 +42,13 @@ export const workspace = setupEffect({
 				reason: Schema.UndefinedOr(Schema.String),
 			}),
 			"hold.request": HoldRequest,
-			"hold.schedule": ScheduleHold,
 			"hold.add": Schema.Struct({ hold: Hold }),
 			"hold.lift": Schema.Struct({ holdId: Schema.String }),
 			"task.answer": Schema.Struct({ taskId: Schema.String, outcome: Outcome }),
 		},
 		internalEvents: { "hold.expire": Schema.Struct({ holdId: Schema.String }) },
-		actions: { scheduleHold: { params: HoldRequest } },
 	},
 	actors: { unit },
-	actions: {
-		scheduleHold: ({ self, holdId, scope, resetsAt }) =>
-			Effect.flatMap(Clock.currentTimeMillis, (now) =>
-				send(self, {
-					type: "hold.schedule",
-					holdId,
-					scope,
-					delay: Math.max(0, resetsAt - now),
-				}),
-			),
-	},
 }).createMachine({
 	id: "workspace",
 	version: "1",
@@ -120,11 +103,7 @@ export const workspace = setupEffect({
 				},
 			};
 		},
-		"hold.request": ({ actions, event, self }, enq) => {
-			const { type: _, ...request } = event;
-			enq(actions.scheduleHold, { ...request, self });
-		},
-		"hold.schedule": ({ context, event }, enq) => {
+		"hold.request": ({ context, event }, enq) => {
 			if (context.holds.some((hold) => hold.id === event.holdId))
 				return undefined;
 			const hold = {
@@ -134,7 +113,7 @@ export const workspace = setupEffect({
 			};
 			enq.raise(
 				{ type: "hold.expire", holdId: hold.id },
-				{ delay: event.delay, id: hold.id },
+				{ delay: Math.max(0, event.resetsAt - event.at), id: hold.id },
 			);
 			for (const id of getActive(context))
 				enq.sendTo(getUnitActorId(id), { type: "hold.placed", hold });

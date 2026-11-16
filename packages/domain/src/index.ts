@@ -28,25 +28,26 @@ export const UnitId = TaskIdPart;
 export const TierName = TaskIdPart;
 
 export const Tier = Schema.Struct({
-	tier: Schema.String,
+	tier: TierName,
 	workers: Schema.NonEmptyArray(Worker),
 	rules: Schema.Record(Schema.String, Schema.Literals(["up", "final"])),
 });
 export type Tier = typeof Tier.Type;
 
-function routeSchema<T extends Schema.Top>(tier: T) {
-	const tiers = Schema.NonEmptyArray(tier);
-	return Schema.Struct({
-		implement: tiers,
-		verify: tiers,
-		judge: tiers,
-		intervene: tiers,
-	});
-}
-
-export const Routes = routeSchema(Tier);
-export const NamedRoutes = routeSchema(
-	Schema.Struct({ ...Tier.fields, tier: TierName }),
+export const Routes = Schema.Struct({
+	implement: Schema.NonEmptyArray(Tier),
+	verify: Schema.NonEmptyArray(Tier),
+	judge: Schema.NonEmptyArray(Tier),
+	intervene: Schema.NonEmptyArray(Tier),
+}).check(
+	Schema.makeFilter(({ intervene }) =>
+		intervene.at(-1)?.workers.every((worker) => worker.harness === "person")
+			? undefined
+			: {
+					path: ["intervene"],
+					issue: "final intervention tier must contain only person workers",
+				},
+	),
 );
 export type Routes = typeof Routes.Type;
 
