@@ -545,3 +545,78 @@ test("manual hold lift cancels its timer before the id is reused", async () => {
 		),
 	);
 });
+
+const noWorkers = { run: () => Effect.die("unexpected worker") };
+
+test.each([
+	{ name: "a self-dependency", units: [["A", ["A"]]] },
+	{
+		name: "a two-unit cycle",
+		units: [
+			["A", ["B"]],
+			["B", ["A"]],
+		],
+	},
+	{
+		name: "a three-unit cycle",
+		units: [
+			["A", ["B"]],
+			["B", ["C"]],
+			["C", ["A"]],
+		],
+	},
+] as const)(
+	"refuses $name before spawning the last unit",
+	async ({ units }) => {
+		await Effect.runPromise(
+			Effect.gen(function* () {
+				const actor = yield* createEffectActor(workspace);
+				for (const [id, deps] of units) {
+					yield* sendAndAwait(actor, {
+						type: "unit.add",
+						id,
+						deps,
+						routes,
+						repo: "repo",
+						title: id,
+						maxRounds: 2,
+						interventionCap: 2,
+						attemptLimit: 2,
+					});
+				}
+				const orderedIds = units.map(([id]) => id);
+				const snapshot = actor.getSnapshot();
+				expect(snapshot.context.units.map(({ id }) => id)).toEqual(
+					orderedIds.slice(0, -1),
+				);
+				expect(snapshot.children[`unit:${orderedIds.at(-1)}`]).toBeUndefined();
+			}).pipe(Effect.scoped, Effect.provideService(Workers, noWorkers)),
+		);
+	},
+);
+
+test("a delayed quota hold uses the original reset deadline", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			yield* TestClock.adjust(50);
+			yield* sendAndAwait(actor, {
+				type: "hold.request",
+				holdId: "quota",
+				scope: { kind: "all" },
+				at: 0,
+				resetsAt: 100,
+			});
+			yield* TestClock.adjust(49);
+			expect(actor.getSnapshot().context.holds.map(({ id }) => id)).toEqual([
+				"quota",
+			]);
+			yield* TestClock.adjust(1);
+			expect(actor.getSnapshot().context.holds).toEqual([]);
+		}).pipe(
+			Effect.scoped,
+			Effect.provide(TestClock.layer()),
+			Effect.provideService(Workers, noWorkers),
+		),
+	);
+});
