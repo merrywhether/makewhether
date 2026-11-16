@@ -19,6 +19,14 @@ export const Worker = Schema.Struct({
 });
 export type Worker = typeof Worker.Type;
 
+const TaskIdPart = Schema.String.check(
+	Schema.isPattern(/^[^/.#]*$/u, {
+		message: "task ID components cannot contain /, . or #",
+	}),
+);
+export const UnitId = TaskIdPart;
+export const TierName = TaskIdPart;
+
 export const Tier = Schema.Struct({
 	tier: Schema.String,
 	workers: Schema.NonEmptyArray(Worker),
@@ -26,12 +34,20 @@ export const Tier = Schema.Struct({
 });
 export type Tier = typeof Tier.Type;
 
-export const Routes = Schema.Struct({
-	implement: Schema.NonEmptyArray(Tier),
-	verify: Schema.NonEmptyArray(Tier),
-	judge: Schema.NonEmptyArray(Tier),
-	intervene: Schema.NonEmptyArray(Tier),
-});
+function routeSchema<T extends Schema.Top>(tier: T) {
+	const tiers = Schema.NonEmptyArray(tier);
+	return Schema.Struct({
+		implement: tiers,
+		verify: tiers,
+		judge: tiers,
+		intervene: tiers,
+	});
+}
+
+export const Routes = routeSchema(Tier);
+export const NamedRoutes = routeSchema(
+	Schema.Struct({ ...Tier.fields, tier: TierName }),
+);
 export type Routes = typeof Routes.Type;
 
 export const HoldScope = Schema.Union([

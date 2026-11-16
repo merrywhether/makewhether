@@ -1,6 +1,6 @@
-import { Hold, Outcome, Routes } from "@makewhether/domain";
-import { setupEffect } from "@xstate/effect";
-import { Schema } from "effect";
+import { Hold, NamedRoutes, Outcome, UnitId } from "@makewhether/domain";
+import { send, setupEffect } from "@xstate/effect";
+import { Clock, Effect, Schema } from "effect";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
 
@@ -11,11 +11,11 @@ const UnitRef = Schema.Struct({
 const Result = Schema.Literals(["passed", "cancelled"]);
 
 const unitFields = {
-	id: Schema.String,
+	id: UnitId,
 	repo: Schema.String,
 	title: Schema.String,
 	deps: Schema.Array(Schema.String),
-	routes: Routes,
+	routes: NamedRoutes,
 	maxRounds: Schema.Number,
 	interventionCap: Schema.Number,
 };
@@ -23,6 +23,12 @@ const UnitAdd = Schema.Union([
 	Schema.Struct({ ...unitFields, attemptLimit: Schema.Number }),
 	Schema.Struct(unitFields),
 ]);
+
+const ScheduleHold = Schema.Struct({
+	holdId: Schema.String,
+	scope: HoldRequest.fields.scope,
+	delay: Schema.Number,
+});
 
 export const workspace = setupEffect({
 	schemas: {
@@ -40,20 +46,33 @@ export const workspace = setupEffect({
 				reason: Schema.UndefinedOr(Schema.String),
 			}),
 			"hold.request": HoldRequest,
+			"hold.schedule": ScheduleHold,
 			"hold.add": Schema.Struct({ hold: Hold }),
 			"hold.lift": Schema.Struct({ holdId: Schema.String }),
 			"task.answer": Schema.Struct({ taskId: Schema.String, outcome: Outcome }),
 		},
 		internalEvents: { "hold.expire": Schema.Struct({ holdId: Schema.String }) },
+		actions: { scheduleHold: { params: HoldRequest } },
 	},
 	actors: { unit },
+	actions: {
+		scheduleHold: ({ self, holdId, scope, resetsAt }) =>
+			Effect.flatMap(Clock.currentTimeMillis, (now) =>
+				send(self, {
+					type: "hold.schedule",
+					holdId,
+					scope,
+					delay: Math.max(0, resetsAt - now),
+				}),
+			),
+	},
 }).createMachine({
 	id: "workspace",
 	version: "1",
 	context: { units: [], finished: {}, cancellationReasons: {}, holds: [] },
 	on: {
 		"unit.add": ({ context, event }, enq) => {
-			if (context.units.some((item) => item.id === event.id)) return undefined;
+			if (unitAddError(context.units, event)) return undefined;
 			const { type: _, ...input } = event;
 			enq.spawn("unit", {
 				id: getUnitActorId(event.id),
@@ -101,7 +120,11 @@ export const workspace = setupEffect({
 				},
 			};
 		},
-		"hold.request": ({ context, event }, enq) => {
+		"hold.request": ({ actions, event, self }, enq) => {
+			const { type: _, ...request } = event;
+			enq(actions.scheduleHold, { ...request, self });
+		},
+		"hold.schedule": ({ context, event }, enq) => {
 			if (context.holds.some((hold) => hold.id === event.holdId))
 				return undefined;
 			const hold = {
@@ -111,7 +134,7 @@ export const workspace = setupEffect({
 			};
 			enq.raise(
 				{ type: "hold.expire", holdId: hold.id },
-				{ delay: Math.max(0, event.resetsAt - event.at), id: hold.id },
+				{ delay: event.delay, id: hold.id },
 			);
 			for (const id of getActive(context))
 				enq.sendTo(getUnitActorId(id), { type: "hold.placed", hold });
@@ -180,4 +203,22 @@ function getUnitActorId(id: string) {
 
 function isFinished(verdict: string | undefined) {
 	return verdict === "passed" || verdict === "cancelled";
+}
+
+function unitAddError(
+	units: readonly (typeof UnitRef.Type)[],
+	unit: typeof UnitRef.Type,
+): string | undefined {
+	const dependencies = new Map(units.map(({ id, deps }) => [id, deps]));
+	if (dependencies.has(unit.id)) return `duplicate unit ${unit.id}`;
+	const pending = [...unit.deps];
+	const visited = new Set<string>();
+	for (const id of pending) {
+		if (id === unit.id) return `dependency cycle for unit ${unit.id}`;
+		if (visited.has(id)) continue;
+		visited.add(id);
+		for (const dependency of dependencies.get(id) ?? [])
+			pending.push(dependency);
+	}
+	return undefined;
 }
