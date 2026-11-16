@@ -2,18 +2,23 @@ import {
 	Hold,
 	HoldAddEvent,
 	HoldLiftEvent,
+	matchesHold,
 	TaskAnswerEvent,
 	UnitAddEvent,
 	UnitDecisionEvent,
 	UnitId,
+	type Worker,
 } from "@makewhether/domain";
 import { setupEffect } from "@xstate/effect";
 import { Schema } from "effect";
 import type { EventFrom, SnapshotFrom } from "xstate";
 import { standardSchemaValidator } from "xstate/validation";
+import { smallUnit } from "./small-unit.ts";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
 import { stuckDecisionProblem } from "./unit-logic.ts";
+
+export const unitMachineNames = ["unit", "small-unit"] as const;
 
 const UnitRef = Schema.Struct({
 	id: Schema.String,
@@ -45,7 +50,7 @@ export const workspace = setupEffect({
 		},
 		internalEvents: { "hold.expire": Schema.Struct({ holdId: Schema.String }) },
 	},
-	actors: { unit },
+	actors: { unit, smallUnit },
 }).createMachine({
 	id: "workspace",
 	version: "1",
@@ -54,19 +59,20 @@ export const workspace = setupEffect({
 		"unit.add": ({ context, event }, enq) => {
 			if (unitAddError(context.units, event)) return undefined;
 			const { type: _, ...input } = event;
-			enq.spawn("unit", {
-				id: getUnitActorId(event.id),
-				input: {
-					...input,
-					holds: context.holds,
-					depsCancelled: event.deps.filter(
-						(dep) => context.finished[dep] === "cancelled",
-					),
-					depsPassed: event.deps.filter(
-						(dep) => context.finished[dep] === "passed",
-					),
-				},
-			});
+			const childInput = {
+				...input,
+				holds: context.holds,
+				depsCancelled: event.deps.filter(
+					(dep) => context.finished[dep] === "cancelled",
+				),
+				depsPassed: event.deps.filter(
+					(dep) => context.finished[dep] === "passed",
+				),
+			};
+			const child = { id: getUnitActorId(event.id), input: childInput };
+			if ("machine" in event && event.machine === "small-unit")
+				enq.spawn("smallUnit", child);
+			else enq.spawn("unit", child);
 			return {
 				context: {
 					...context,
@@ -202,7 +208,11 @@ function unitDecisionError(
 	if (!snapshot) return `unknown unit ${event.unitId}`;
 	if (snapshot.value !== "stuck" || snapshot.status !== "active")
 		return `unit ${event.unitId} is not stuck`;
-	return stuckDecisionProblem(snapshot.context, event, true);
+	return stuckDecisionProblem(
+		snapshot.context,
+		event,
+		unit?.src !== "smallUnit",
+	);
 }
 
 /** Validate inbox events before applying them to the workspace. */
@@ -250,4 +260,70 @@ function unitAddError(
 			pending.push(dependency);
 	}
 	return undefined;
+}
+
+/** Project the current actor tree without storing derived cancellation information. */
+export function readUnits(snapshot: SnapshotFrom<typeof workspace>) {
+	const { units, finished, cancellationReasons } = snapshot.context;
+	return units.map((entry) => {
+		const verdict = finished[entry.id];
+		const unit = snapshot.children[getUnitActorId(entry.id)]?.getSnapshot();
+		const task = unit?.children.task?.getSnapshot();
+		const dependencies = entry.deps.filter((id) => finished[id] !== "passed");
+		const holds: readonly (typeof Hold.Type)[] =
+			task?.value === "held"
+				? task.context.holds.filter((hold: typeof Hold.Type) =>
+						(task.context.worker
+							? [task.context.worker]
+							: task.context.spec.workers
+						).some((worker: typeof Worker.Type) =>
+							matchesHold(hold.scope, worker, task.context.spec.repo),
+						),
+					)
+				: [];
+		const waiting =
+			task && (task.value === "running" || task.value === "asking")
+				? {
+						id: task.context.spec.taskId,
+						phase: task.context.spec.phase,
+						state: task.value,
+						worker: task.context.worker,
+					}
+				: undefined;
+		const stuck = unit?.value === "stuck" ? unit.context.stuck : undefined;
+		let cancelCascade: string[] | undefined;
+		if (
+			stuck ||
+			(task?.value === "asking" &&
+				task.context.spec.phase === "intervene" &&
+				task.context.worker?.harness === "person")
+		) {
+			const affected = new Set([entry.id]);
+			let changed = true;
+			while (changed) {
+				changed = false;
+				for (const other of units)
+					if (
+						!affected.has(other.id) &&
+						!isFinished(finished[other.id]) &&
+						other.deps.some((dep) => affected.has(dep))
+					) {
+						affected.add(other.id);
+						changed = true;
+					}
+			}
+			affected.delete(entry.id);
+			cancelCascade = [...affected];
+		}
+		return {
+			id: entry.id,
+			verdict: isFinished(verdict) ? verdict : undefined,
+			reason: cancellationReasons[entry.id],
+			dependencies,
+			task: waiting,
+			holds,
+			...(stuck ? { status: "stuck" as const, stuck } : {}),
+			cancelCascade,
+		};
+	});
 }

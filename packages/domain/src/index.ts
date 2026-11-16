@@ -219,7 +219,7 @@ export const InboxCommand = Schema.Union([
 ]);
 export type InboxCommand = typeof InboxCommand.Type;
 
-export const UnitAddEvent = Schema.Struct({
+const UnitAddBase = Schema.Struct({
 	id: UnitId,
 	repo: Schema.String,
 	title: Schema.String,
@@ -229,6 +229,10 @@ export const UnitAddEvent = Schema.Struct({
 	interventionCap: Schema.Number,
 	attemptLimit: Schema.Number,
 });
+export const UnitAddEvent = Schema.Union([
+	Schema.Struct({ ...UnitAddBase.fields, machine: Schema.String }),
+	UnitAddBase,
+]);
 export const TaskAnswerEvent = Schema.Struct({
 	taskId: Schema.String,
 	outcome: Outcome,
@@ -271,3 +275,11 @@ export const LockRecord = Schema.Struct({
 	port: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 })),
 });
 export type LockRecord = typeof LockRecord.Type;
+
+/** Declared waits and outcome handling for a machine state. */
+export const MachineStateMeta = Schema.Struct({
+	waitsOn: Schema.Literals(["task", "dependency", "hold", "person"]),
+	role: Schema.optional(Schema.String),
+	phase: Schema.optional(Schema.String),
+	handles: Schema.optional(Schema.Array(Schema.String)),
+});
