@@ -22,6 +22,7 @@ import { promisify } from "node:util";
 import { getUnitSettings } from "@makewhether/config";
 import { expect, test } from "vitest";
 import { readLock } from "../src/lock.ts";
+import { removeEngineData } from "./engine-data.ts";
 
 const exec = promisify(execFile);
 const cli = join(import.meta.dirname, "../../cli/src/main.ts");
@@ -126,12 +127,7 @@ test("CLI replays a completed recording from a relocated copy", async () => {
 		expect(result.answers).toEqual(expectedAnswers);
 	} finally {
 		if (existsSync(recording)) setRecordingReadonly(recording, false);
-		const owner = readLock(join(dataDir, "engine.lock"));
-		if (owner) {
-			try {
-				process.kill(owner.pid, "SIGKILL");
-			} catch {}
-		}
+		await removeEngineData(dataDir);
 		rmSync(root, { recursive: true, force: true });
 	}
 }, 20000);
@@ -209,13 +205,7 @@ test("unit HTTP and CLI reads show holds and dependencies and reject bad paths",
 		);
 		await command("stop");
 	} finally {
-		const owner = readLock(join(root, "engine.lock"));
-		if (owner) {
-			try {
-				process.kill(owner.pid, "SIGKILL");
-			} catch {}
-		}
-		rmSync(root, { recursive: true, force: true });
+		await removeEngineData(root);
 	}
 }, 20000);
 
@@ -328,12 +318,7 @@ test("replay accepts an offline recording that has no worker runs", async () => 
 			JSON.parse((await command("replay", recording)).stdout),
 		).toMatchObject({ finished: {}, starts: [] });
 	} finally {
-		const owner = readLock(join(dataDir, "engine.lock"));
-		if (owner) {
-			try {
-				process.kill(owner.pid, "SIGKILL");
-			} catch {}
-		}
+		await removeEngineData(dataDir);
 		rmSync(root, { recursive: true, force: true });
 	}
 }, 20000);
@@ -437,12 +422,7 @@ test("replay handles a boot hold that interrupts an invocation before it starts"
 		expect(result.finished).toEqual({ A: "passed" });
 		expect(result.starts[0].key).toBe("A/1.implement.fake#2");
 	} finally {
-		const owner = readLock(join(dataDir, "engine.lock"));
-		if (owner) {
-			try {
-				process.kill(owner.pid, "SIGKILL");
-			} catch {}
-		}
+		await removeEngineData(dataDir);
 		rmSync(root, { recursive: true, force: true });
 	}
 }, 20000);
@@ -666,12 +646,7 @@ test("CLI restores and replays stuck units, then resumes one and cancels another
 		expect(after.stuck).toEqual([]);
 		expect(after.finished).toEqual({ A: "passed", B: "cancelled" });
 	} finally {
-		const owner = readLock(join(dataDir, "engine.lock"));
-		if (owner) {
-			try {
-				process.kill(owner.pid, "SIGKILL");
-			} catch {}
-		}
+		await removeEngineData(dataDir);
 		rmSync(root, { recursive: true, force: true });
 	}
 }, 20_000);
