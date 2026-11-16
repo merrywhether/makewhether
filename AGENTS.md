@@ -16,12 +16,15 @@ mise exec -- pnpm typecheck
 mise exec -- pnpm test
 ```
 
-Lint treats warnings as errors.
+Lint treats warnings as errors. CI runs lint and typecheck. Run `pnpm test`
+locally.
 
 ## Packages
 
 `.package-graph.cjs` defines allowed dependencies. Lint checks both workspace
-manifests and source imports.
+manifests and source imports. The scaffold declares the package layout.
+[M1 (PR #1)](https://github.com/merrywhether/makewhether/pull/1) provides the
+implementations described below.
 
 - **`domain`** owns shared types and Effect schemas.
 - **`machines`** owns the workspace, unit, and task statecharts and the worker
@@ -36,8 +39,8 @@ manifests and source imports.
 
 ## Conventions
 
-- Use `undefined` for absence. Lint permits `== null` and `!= null` for
-  comparisons at external boundaries.
+- Use `undefined` for absence. Lint allows `== null` and `!= null` checks
+  anywhere. Use these comparisons at external boundaries.
 - Decode external input with the owning schema. Use `domain` for shared
   contracts.
 - Use scoped Conventional Commits, such as `docs(repo): add review guidance`.

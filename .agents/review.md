@@ -9,7 +9,9 @@ boundary makes each later change propagate through more of the codebase.
 
 - **Keep concerns behind their package interfaces.** Import production libraries
   through their declared exports. Use executable entry points to run
-  subprocesses. Share test fixtures through explicit test-only imports.
+  subprocesses. Tests may import fixtures by relative path from another
+  package's `test/` directory. The M1 host tests use this exception for machine
+  scenarios.
 - **Enforce dependency direction.** Check changes against `.package-graph.cjs`
   and explain any change to the graph in the PR. Keep direct infrastructure
   access out of `domain` and `machines`. Transitions describe policy, and clocks
