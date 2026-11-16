@@ -1,8 +1,8 @@
-import type { Worker } from "@makewhether/domain";
+import type { RunnerEvent, RunnerInput, Worker } from "@makewhether/domain";
 import { createEffectActor, waitFor } from "@xstate/effect";
 import { Effect } from "effect";
 import { expect, test } from "vitest";
-import { type RunnerEvent, type RunnerInput, Workers } from "../src/runner.ts";
+import { Workers } from "../src/runner.ts";
 import { unit } from "../src/unit.ts";
 import {
 	decide,

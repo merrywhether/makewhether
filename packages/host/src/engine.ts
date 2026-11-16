@@ -14,6 +14,9 @@ import {
 	Worker,
 } from "@makewhether/domain";
 import {
+	prepareWorkspaceCheckpoint,
+	readCheckpointStuckUnits,
+	readStuckUnitContext,
 	validateWorkspaceEvent,
 	Workers,
 	workspace,
@@ -100,6 +103,7 @@ function getEvent(
 			};
 		}
 		case "task.answer":
+		case "unit.decide":
 			return command;
 		case "hold.add":
 			return {
@@ -149,9 +153,11 @@ export const openEngine = (options: Options) =>
 		const clock = yield* Clock.Clock;
 		const stored = options.store.getCheckpoint();
 		if (stored) verifyCheckpoint(stored, workspace);
+		const restored =
+			stored && prepareWorkspaceCheckpoint(getSnapshot(stored.snapshot));
 		const actor = yield* createEffectActor(
 			workspace,
-			stored ? { snapshot: getSnapshot(stored.snapshot) } : {},
+			restored ? { snapshot: restored.snapshot } : {},
 		);
 		const errors = getRestoreErrors(actor);
 		if (errors.length)
@@ -188,6 +194,13 @@ export const openEngine = (options: Options) =>
 				failure = error;
 			}
 		};
+		const parkedEpisodes = new Map(
+			restored &&
+				readCheckpointStuckUnits(restored.snapshot).map(({ unitId, stuck }) => [
+					unitId,
+					stuck.episode,
+				]),
+		);
 		actor.inspect((inspection) => {
 			if (inspection.type !== "@xstate.transition") return;
 			let event: unknown = inspection.event;
@@ -211,6 +224,21 @@ export const openEngine = (options: Options) =>
 					/* Other actor snapshots do not carry task context. */
 				}
 			}
+			const snapshot = inspection.snapshot;
+			if (
+				"value" in snapshot &&
+				snapshot.value === "stuck" &&
+				"context" in snapshot
+			) {
+				const parked = readStuckUnitContext(snapshot.context);
+				if (
+					parked &&
+					parkedEpisodes.get(parked.unitId) !== parked.stuck.episode
+				) {
+					parkedEpisodes.set(parked.unitId, parked.stuck.episode);
+					event = { ...inspection.event, stuck: parked.stuck };
+				}
+			}
 			pending.push({
 				at: clock.currentTimeMillisUnsafe(),
 				kind: "transition",
@@ -229,7 +257,19 @@ export const openEngine = (options: Options) =>
 				flush();
 			});
 		});
-		if (!stored) options.store.commit(checkpoint(), []);
+		if (!stored || restored?.parked.length) {
+			const captured = checkpoint();
+			options.store.commit(
+				captured,
+				restored?.parked.map(({ unitId, stuck }) => ({
+					at: captured.at,
+					kind: "transition",
+					key: "",
+					address: `workspace/unit:${unitId}`,
+					event: JSON.stringify({ type: "unit.parked", stuck }),
+				})) ?? [],
+			);
+		}
 		const settle = Effect.gen(function* () {
 			for (;;) {
 				const seen = revision;
