@@ -148,6 +148,11 @@ export const StuckUnit = Schema.Struct({
 });
 export type StuckUnit = typeof StuckUnit.Type;
 
+export const AttemptLimit = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+export const MaxRounds = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+export const InterventionCap = Schema.Natural;
+export const defaultAttemptLimit = 2;
+
 export const TaskSpec = Schema.Struct({
 	taskId: Schema.String,
 	phase: Phase,
@@ -157,7 +162,7 @@ export const TaskSpec = Schema.Struct({
 	workers: Schema.NonEmptyArray(Worker),
 	notes: Schema.Array(Schema.String),
 	prior: Schema.Unknown,
-	attemptLimit: Schema.Number,
+	attemptLimit: AttemptLimit,
 });
 export type TaskSpec = typeof TaskSpec.Type;
 

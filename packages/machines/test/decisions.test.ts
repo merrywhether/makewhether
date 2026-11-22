@@ -1,4 +1,4 @@
-import type { Decision, Routes } from "@makewhether/domain";
+import type { Decision, Outcome, Routes } from "@makewhether/domain";
 import { createEffectActor, sendAndAwait } from "@xstate/effect";
 import { Effect, References } from "effect";
 import { TestClock } from "effect/testing";
@@ -199,71 +199,88 @@ test("intervention at the cap starts at agent; the next starts at person", async
 	);
 });
 
-test("a stuck episode is taskless and only its matching decision recovers it", async () => {
-	const world = createWorld(() => ({
-		duration: 10,
-		event: {
-			type: "runner.report",
-			outcome: { kind: "failed", detail: "blocked" },
-		},
-	}));
-	await Effect.runPromise(
-		Effect.gen(function* () {
-			const actor = yield* createEffectActor(workspace);
-			yield* sendAndAwait(actor, {
-				type: "unit.add",
-				id: "U",
-				repo: "repo",
-				title: "U",
-				deps: [],
-				routes,
-				maxRounds: 2,
-				interventionCap: 2,
-			});
-			for (let i = 0; i < 20; i++) {
-				const unit = actor.getSnapshot().children["unit:U"]?.getSnapshot();
-				const task = unit?.children.task?.getSnapshot();
-				if (task?.value === "asking") {
-					yield* sendAndAwait(actor, {
-						type: "task.answer",
-						taskId: task.context.spec.taskId,
-						outcome: { kind: "done", verdict: "unsure", detail: "uncertain" },
-					});
-					const stuck = actor.getSnapshot().children["unit:U"]?.getSnapshot();
-					expect(stuck?.value).toBe("stuck");
-					expect(stuck?.children.task).toBeUndefined();
-					expect(stuck?.context.stuck).toMatchObject({
-						episode: 1,
-						reason: "unhandled-intervention",
-					});
-					yield* sendAndAwait(actor, {
-						type: "unit.decide",
-						unitId: "U",
-						episode: 2,
-						decision: { kind: "resume" },
-					});
-					expect(
-						actor.getSnapshot().children["unit:U"]?.getSnapshot().value,
-					).toBe("stuck");
-					yield* sendAndAwait(actor, {
-						type: "unit.decide",
-						unitId: "U",
-						episode: 1,
-						decision: { kind: "resume" },
-					});
-					const resumed = actor.getSnapshot().children["unit:U"]?.getSnapshot();
-					expect(resumed?.value).toBe("implement");
-					expect(resumed?.context.interventions).toBe(0);
-					return;
+test.each([
+	{ kind: "done", verdict: "unsure", detail: "uncertain" },
+	{ kind: "done", verdict: "decision", decision: { kind: "raise-limit" } },
+] as const satisfies readonly Outcome[])(
+	"intervention verdict $verdict parks a taskless episode and rejects invalid recovery decisions",
+	async (outcome) => {
+		const world = createWorld(() => ({
+			duration: 10,
+			event: {
+				type: "runner.report",
+				outcome: { kind: "failed", detail: "blocked" },
+			},
+		}));
+		await Effect.runPromise(
+			Effect.gen(function* () {
+				const actor = yield* createEffectActor(workspace);
+				yield* sendAndAwait(actor, {
+					type: "unit.add",
+					id: "U",
+					repo: "repo",
+					title: "U",
+					deps: [],
+					routes,
+					maxRounds: Number.MAX_SAFE_INTEGER,
+					interventionCap: 2,
+				});
+				for (let i = 0; i < 20; i++) {
+					const unit = actor.getSnapshot().children["unit:U"]?.getSnapshot();
+					const task = unit?.children.task?.getSnapshot();
+					if (task?.value === "asking") {
+						yield* sendAndAwait(actor, {
+							type: "task.answer",
+							taskId: task.context.spec.taskId,
+							outcome,
+						});
+						const stuck = actor.getSnapshot().children["unit:U"]?.getSnapshot();
+						expect(stuck?.value).toBe("stuck");
+						expect(stuck?.children.task).toBeUndefined();
+						expect(stuck?.context.stuck).toMatchObject({
+							episode: 1,
+							reason: "unhandled-intervention",
+						});
+						yield* sendAndAwait(actor, {
+							type: "unit.decide",
+							unitId: "U",
+							episode: 2,
+							decision: { kind: "resume" },
+						});
+						expect(
+							actor.getSnapshot().children["unit:U"]?.getSnapshot().value,
+						).toBe("stuck");
+						yield* sendAndAwait(actor, {
+							type: "unit.decide",
+							unitId: "U",
+							episode: 1,
+							decision: { kind: "raise-limit" },
+						});
+						expect(
+							actor.getSnapshot().children["unit:U"]?.getSnapshot().context,
+						).toEqual(stuck?.context);
+						yield* sendAndAwait(actor, {
+							type: "unit.decide",
+							unitId: "U",
+							episode: 1,
+							decision: { kind: "resume" },
+						});
+						const resumed = actor
+							.getSnapshot()
+							.children["unit:U"]?.getSnapshot();
+						expect(resumed?.value).toBe("implement");
+						expect(resumed?.context.interventions).toBe(0);
+						return;
+					}
+					yield* TestClock.adjust(10);
 				}
-				yield* TestClock.adjust(10);
-			}
-			throw new Error("intervention not reached");
-		}).pipe(
-			Effect.scoped,
-			Effect.provideService(Workers, world.workers),
-			Effect.provide(TestClock.layer()),
-			Effect.provideService(References.MinimumLogLevel, "Warn"),
-		),
-	);
-});
+				throw new Error("intervention not reached");
+			}).pipe(
+				Effect.scoped,
+				Effect.provideService(Workers, world.workers),
+				Effect.provide(TestClock.layer()),
+				Effect.provideService(References.MinimumLogLevel, "Warn"),
+			),
+		);
+	},
+);

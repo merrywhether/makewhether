@@ -69,35 +69,32 @@ describe("task retries", () => {
 		});
 	});
 
-	test("exhausts after two worker crashes", async () => {
-		let starts = 0;
-		const outcome = await Effect.runPromise(
+	test("exhausts after the configured number of worker crashes", async () => {
+		const attemptLimit = 3;
+		const world = createWorld(() => ({
+			duration: 10,
+			event: { type: "runner.failed", reason: "crashed", detail: "crash" },
+		}));
+		const snapshot = await Effect.runPromise(
 			Effect.gen(function* () {
 				const actor = yield* createEffectActor(task, {
-					input: { spec, holds: [] },
+					input: { spec: { ...spec, attemptLimit }, holds: [] },
 				});
-				const snapshot = yield* waitFor(
-					actor,
-					(state) => state.status === "done",
-				);
-				return snapshot.output?.outcome;
+				for (let step = 0; step < attemptLimit; step++)
+					yield* TestClock.adjust(10);
+				return actor.getSnapshot();
 			}).pipe(
 				Effect.scoped,
-				Effect.provideService(Workers, {
-					run: (_input, emit) =>
-						Effect.sync(() => {
-							starts++;
-							emit({
-								type: "runner.failed",
-								reason: "crashed",
-								detail: "crash",
-							});
-						}),
-				}),
+				Effect.provideService(Workers, world.workers),
+				Effect.provide(TestClock.layer()),
 			),
 		);
-		expect(starts).toBe(2);
-		expect(outcome).toEqual({ kind: "exhausted", detail: "crash" });
+		expect(world.processes).toHaveLength(attemptLimit);
+		expect(snapshot.status).toBe("done");
+		expect(snapshot.output?.outcome).toEqual({
+			kind: "exhausted",
+			detail: "crash",
+		});
 	});
 
 	test("exhausts a runner that ends without a report", async () => {

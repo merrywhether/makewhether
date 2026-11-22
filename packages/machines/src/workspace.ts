@@ -1,5 +1,9 @@
 import {
+	AttemptLimit,
+	defaultAttemptLimit,
 	Hold,
+	InterventionCap,
+	MaxRounds,
 	Outcome,
 	Routes,
 	UnitDecisionEvent,
@@ -7,6 +11,7 @@ import {
 } from "@makewhether/domain";
 import { setupEffect } from "@xstate/effect";
 import { Schema } from "effect";
+import { types } from "xstate";
 import { standardSchemaValidator } from "xstate/validation";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
@@ -18,19 +23,26 @@ const UnitRef = Schema.Struct({
 });
 const Result = Schema.Literals(["passed", "cancelled"]);
 
-const unitFields = {
+const UnitAdd = Schema.Struct({
 	id: UnitId,
 	repo: Schema.String,
 	title: Schema.String,
 	deps: Schema.Array(UnitId),
 	routes: Routes,
-	maxRounds: Schema.Number,
-	interventionCap: Schema.Number,
+	maxRounds: MaxRounds,
+	interventionCap: InterventionCap,
+	attemptLimit: Schema.optional(AttemptLimit),
+});
+const decodeUnitAdd = Schema.decodeUnknownSync(UnitAdd);
+
+// XState applies Required<> to event payloads from runtime schemas. Keep the
+// optional key in the event type while using Effect's validation.
+const unitAddEventSchema = {
+	"~standard": {
+		...types<typeof UnitAdd.Type>()["~standard"],
+		validate: Schema.toStandardSchemaV1(UnitAdd)["~standard"].validate,
+	},
 };
-const UnitAdd = Schema.Union([
-	Schema.Struct({ ...unitFields, attemptLimit: Schema.Number }),
-	Schema.Struct(unitFields),
-]);
 
 export const workspace = setupEffect({
 	validator: standardSchemaValidator(),
@@ -42,7 +54,7 @@ export const workspace = setupEffect({
 			holds: Schema.Array(Hold),
 		}),
 		events: {
-			"unit.add": UnitAdd,
+			"unit.add": unitAddEventSchema,
 			"unit.finished": Schema.Struct({
 				unit: Schema.String,
 				verdict: Result,
@@ -63,19 +75,18 @@ export const workspace = setupEffect({
 	context: { units: [], finished: {}, cancellationReasons: {}, holds: [] },
 	on: {
 		"unit.add": ({ context, event }, enq) => {
-			if (unitAddError(context.units, event)) return undefined;
-			const { type: _, ...input } = event;
+			const input = decodeUnitAdd(event);
+			if (unitAddError(context.units, input)) return undefined;
 			enq.spawn("unit", {
-				id: getUnitActorId(event.id),
+				id: getUnitActorId(input.id),
 				input: {
 					...input,
-					attemptLimit:
-						("attemptLimit" in event ? event.attemptLimit : undefined) ?? 2,
+					attemptLimit: input.attemptLimit ?? defaultAttemptLimit,
 					holds: context.holds,
-					depsCancelled: event.deps.filter(
+					depsCancelled: input.deps.filter(
 						(dep) => context.finished[dep] === "cancelled",
 					),
-					depsPassed: event.deps.filter(
+					depsPassed: input.deps.filter(
 						(dep) => context.finished[dep] === "passed",
 					),
 				},
@@ -83,7 +94,7 @@ export const workspace = setupEffect({
 			return {
 				context: {
 					...context,
-					units: [...context.units, { id: event.id, deps: event.deps }],
+					units: [...context.units, { id: input.id, deps: input.deps }],
 				},
 			};
 		},

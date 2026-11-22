@@ -9,6 +9,7 @@ import { Schema } from "effect";
 import { HoldRequest, task } from "./task.ts";
 import {
 	decide,
+	decodeUnitInput,
 	enter,
 	parkUnit,
 	phaseState,
@@ -54,7 +55,7 @@ export const unit = setupEffect({
 	id: "unit",
 	version: "1",
 	context: ({ input }) => ({
-		...input,
+		...decodeUnitInput(input),
 		seq: 0,
 		round: 1,
 		notes: [],

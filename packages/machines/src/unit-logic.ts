@@ -1,10 +1,12 @@
 import {
+	AttemptLimit,
 	type Decision,
 	Hold,
 	hasPersonFinalTier,
+	InterventionCap,
+	MaxRounds,
 	type Outcome,
 	type Phase,
-	Routes,
 	StructuralRoutes,
 	StuckEpisode,
 	type StuckReason,
@@ -23,17 +25,17 @@ export const UnitInput = Schema.Struct({
 	deps: Schema.Array(Schema.String),
 	depsPassed: Schema.Array(Schema.String),
 	depsCancelled: Schema.Array(Schema.String),
-	routes: Routes,
+	routes: StructuralRoutes,
 	holds: Schema.Array(Hold),
-	maxRounds: Schema.Number,
-	attemptLimit: Schema.Number,
-	interventionCap: Schema.Number,
+	maxRounds: MaxRounds,
+	attemptLimit: AttemptLimit,
+	interventionCap: InterventionCap,
 });
 export type UnitInput = typeof UnitInput.Type;
+export const decodeUnitInput = Schema.decodeUnknownSync(UnitInput);
 
 export const UnitContext = Schema.Struct({
 	...UnitInput.fields,
-	routes: StructuralRoutes,
 	stuck: Schema.optional(StuckUnit),
 	stuckEpisode: Schema.optional(StuckEpisode),
 	seq: Schema.Number,
@@ -76,6 +78,12 @@ function unsupportedDecisionPhase(
 	);
 }
 
+const isMaxRounds = Schema.is(MaxRounds);
+
+function canRaiseRoundLimit(context: UnitContext): boolean {
+	return isMaxRounds(context.maxRounds + 1);
+}
+
 export function stuckDecisionProblem(
 	context: UnitContext,
 	event: UnitDecisionEvent,
@@ -96,6 +104,8 @@ export function stuckDecisionProblem(
 		return "unit dependencies are unfinished or cancelled";
 	if (unsupportedDecisionPhase(context, event.decision, allowJudge))
 		return "unsupported decision phase";
+	if (event.decision.kind === "raise-limit" && !canRaiseRoundLimit(context))
+		return "round limit cannot be raised";
 	return undefined;
 }
 
@@ -235,6 +245,8 @@ export function decide(context: UnitContext, outcome: Outcome): Next {
 				notes: [...context.notes, decision.note],
 			});
 		case "raise-limit":
+			if (!canRaiseRoundLimit(context))
+				return parkUnit(context, "unhandled-intervention", outcome);
 			return enter(context, phase, {
 				maxRounds: context.maxRounds + 1,
 				round: context.round + 1,

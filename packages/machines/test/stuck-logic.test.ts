@@ -1,6 +1,6 @@
 import type { Worker } from "@makewhether/domain";
 import { createEffectActor, waitFor } from "@xstate/effect";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { expect, test } from "vitest";
 import { type RunnerEvent, type RunnerInput, Workers } from "../src/runner.ts";
 import { unit } from "../src/unit.ts";
@@ -10,7 +10,7 @@ import {
 	recoverStuck,
 	route,
 	stuckDecisionProblem,
-	type UnitContext,
+	UnitContext,
 } from "../src/unit-logic.ts";
 
 const agent: Worker = { model: "agent", harness: "codex", account: "a" };
@@ -68,6 +68,45 @@ test("ordinary decisions preserve the intervention count; recovery resets only i
 		recovery.context.round,
 		recovery.context.maxRounds,
 	]).toEqual([0, 2, 3]);
+});
+
+test("raising the round limit preserves valid context at the safe integer bound", () => {
+	const maxRounds = Number.MAX_SAFE_INTEGER;
+	const outcome = {
+		kind: "done",
+		verdict: "decision",
+		decision: { kind: "raise-limit" },
+	} as const;
+	const before = { ...context, maxRounds: maxRounds - 1 };
+	const raised = decide(before, outcome);
+	if (raised.target !== "verify") throw new Error("expected verify");
+	expect(raised.context).toMatchObject({
+		maxRounds,
+		round: before.round + 1,
+	});
+
+	const capped = decide({ ...context, maxRounds }, outcome);
+	if (capped.target !== "stuck") throw new Error("expected stuck");
+	const saved = Schema.decodeUnknownSync(UnitContext)(
+		JSON.parse(JSON.stringify(capped.context)),
+	);
+	expect(saved).toMatchObject({
+		maxRounds,
+		round: context.round,
+		interventions: context.interventions,
+		stuck: { episode: 1, reason: "unhandled-intervention", outcome },
+	});
+
+	const event = { unitId: "U", episode: 1, decision: outcome.decision };
+	expect(stuckDecisionProblem(saved, event, true)).toBe(
+		"round limit cannot be raised",
+	);
+	const stuck = parkUnit(before, "unhandled-intervention").context;
+	expect(stuckDecisionProblem(stuck, event, true)).toBeUndefined();
+	expect(recoverStuck(stuck, event)).toMatchObject({
+		target: "verify",
+		context: { maxRounds, interventions: 0, stuck: undefined },
+	});
 });
 
 test("stuck admission binds episode, identity and machine phase", () => {

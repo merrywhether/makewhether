@@ -18,6 +18,9 @@ export const HoldRequest = Schema.Struct({
 	at: Schema.Number,
 });
 
+const TaskInput = Schema.Struct({ spec: TaskSpec, holds: Schema.Array(Hold) });
+const decodeTaskInput = Schema.decodeUnknownSync(TaskInput);
+
 const RunningInput = Schema.Struct({ run: Schema.Number, worker: Worker });
 
 const TaskContext = Schema.Struct({
@@ -48,7 +51,7 @@ function retry(context: TaskContext, detail: string) {
 
 export const task = setupEffect({
 	schemas: {
-		input: Schema.Struct({ spec: TaskSpec, holds: Schema.Array(Hold) }),
+		input: TaskInput,
 		context: TaskContext,
 		events: {
 			"runner.started": Schema.Struct({ sessionId: Schema.String }),
@@ -75,7 +78,7 @@ export const task = setupEffect({
 	id: "task",
 	version: "1",
 	context: ({ input }) => ({
-		...input,
+		...decodeTaskInput(input),
 		run: 0,
 		failures: 0,
 		sessionId: undefined,
