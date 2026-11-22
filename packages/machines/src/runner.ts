@@ -1,32 +1,8 @@
-import {
-	type HoldScope,
-	TaskSpec,
-	Worker,
-	type WorkerReport,
-} from "@makewhether/domain";
+import { type RunnerEvent, RunnerInput } from "@makewhether/domain";
 import { createEffectEventStreamLogic } from "@xstate/effect";
-import { Context, Effect, Queue, Schema, type Scope, Stream } from "effect";
+import { Context, Effect, Queue, type Scope, Stream } from "effect";
 
-export const RunnerInput = Schema.Struct({
-	key: Schema.String,
-	run: Schema.Number,
-	spec: TaskSpec,
-	worker: Worker,
-	resume: Schema.UndefinedOr(Schema.String),
-});
-export type RunnerInput = typeof RunnerInput.Type;
-
-export type RunnerEvent =
-	| { type: "runner.started"; sessionId: string }
-	| { type: "runner.report"; outcome: WorkerReport }
-	| { type: "runner.failed"; reason: "crashed" | "lost"; detail: string }
-	| {
-			type: "runner.limit";
-			holdId: string;
-			scope: typeof HoldScope.Type;
-			resetsAt: number;
-			at: number;
-	  };
+export type { RunnerEvent, RunnerInput } from "@makewhether/domain";
 
 export class Workers extends Context.Service<
 	Workers,

@@ -1,17 +1,16 @@
 import {
-	AttemptLimit,
 	defaultAttemptLimit,
 	Hold,
-	InterventionCap,
-	MaxRounds,
-	Outcome,
-	Routes,
+	HoldAddEvent,
+	HoldLiftEvent,
+	TaskAnswerEvent,
+	UnitAddEvent,
 	UnitDecisionEvent,
 	UnitId,
 } from "@makewhether/domain";
 import { setupEffect } from "@xstate/effect";
 import { Schema } from "effect";
-import { types } from "xstate";
+import { type EventFrom, type SnapshotFrom, types } from "xstate";
 import { standardSchemaValidator } from "xstate/validation";
 import { HoldRequest } from "./task.ts";
 import { unit } from "./unit.ts";
@@ -23,24 +22,14 @@ const UnitRef = Schema.Struct({
 });
 const Result = Schema.Literals(["passed", "cancelled"]);
 
-const UnitAdd = Schema.Struct({
-	id: UnitId,
-	repo: Schema.String,
-	title: Schema.String,
-	deps: Schema.Array(UnitId),
-	routes: Routes,
-	maxRounds: MaxRounds,
-	interventionCap: InterventionCap,
-	attemptLimit: Schema.optional(AttemptLimit),
-});
-const decodeUnitAdd = Schema.decodeUnknownSync(UnitAdd);
+const decodeUnitAddEvent = Schema.decodeUnknownSync(UnitAddEvent);
 
 // XState applies Required<> to event payloads from runtime schemas. Keep the
 // optional key in the event type while using Effect's validation.
 const unitAddEventSchema = {
 	"~standard": {
-		...types<typeof UnitAdd.Type>()["~standard"],
-		validate: Schema.toStandardSchemaV1(UnitAdd)["~standard"].validate,
+		...types<typeof UnitAddEvent.Type>()["~standard"],
+		validate: Schema.toStandardSchemaV1(UnitAddEvent)["~standard"].validate,
 	},
 };
 
@@ -61,10 +50,10 @@ export const workspace = setupEffect({
 				reason: Schema.UndefinedOr(Schema.String),
 			}),
 			"hold.request": HoldRequest,
-			"hold.add": Schema.Struct({ hold: Hold }),
-			"hold.lift": Schema.Struct({ holdId: Schema.String }),
+			"hold.add": HoldAddEvent,
+			"hold.lift": HoldLiftEvent,
+			"task.answer": TaskAnswerEvent,
 			"unit.decide": UnitDecisionEvent,
-			"task.answer": Schema.Struct({ taskId: Schema.String, outcome: Outcome }),
 		},
 		internalEvents: { "hold.expire": Schema.Struct({ holdId: Schema.String }) },
 	},
@@ -75,7 +64,7 @@ export const workspace = setupEffect({
 	context: { units: [], finished: {}, cancellationReasons: {}, holds: [] },
 	on: {
 		"unit.add": ({ context, event }, enq) => {
-			const input = decodeUnitAdd(event);
+			const input = decodeUnitAddEvent(event);
 			if (unitAddError(context.units, input)) return undefined;
 			enq.spawn("unit", {
 				id: getUnitActorId(input.id),
@@ -177,13 +166,7 @@ export const workspace = setupEffect({
 		},
 		"unit.decide": ({ children, event }, enq) => {
 			const id = getUnitActorId(event.unitId);
-			const snapshot = children[id]?.getSnapshot();
-			if (
-				snapshot?.status !== "active" ||
-				snapshot.value !== "stuck" ||
-				stuckDecisionProblem(snapshot.context, event, true)
-			)
-				return;
+			if (unitDecisionError(children[id], event)) return;
 			enq.sendTo(id, event);
 		},
 		"task.answer": ({ context, event }, enq) => {
@@ -206,12 +189,62 @@ function getActive(context: {
 		.filter((id) => !isFinished(context.finished[id]));
 }
 
-function getUnitActorId(id: string) {
-	return `unit:${id}`;
+const unitActorPrefix = "unit:";
+
+export function getUnitActorId(id: string) {
+	return `${unitActorPrefix}${id}`;
+}
+
+export function parseUnitActorId(actorId: string) {
+	return actorId.startsWith(unitActorPrefix)
+		? actorId.slice(unitActorPrefix.length)
+		: undefined;
 }
 
 function isFinished(verdict: string | undefined) {
 	return verdict === "passed" || verdict === "cancelled";
+}
+
+type WorkspaceSnapshot = SnapshotFrom<typeof workspace>;
+
+function unitDecisionError(
+	unit: WorkspaceSnapshot["children"][string] | undefined,
+	event: typeof UnitDecisionEvent.Type,
+): string | undefined {
+	const snapshot = unit?.getSnapshot();
+	if (!snapshot) return `unknown unit ${event.unitId}`;
+	if (snapshot.value !== "stuck" || snapshot.status !== "active")
+		return `unit ${event.unitId} is not stuck`;
+	return stuckDecisionProblem(snapshot.context, event, true);
+}
+
+/** Validate inbox events before applying them to the workspace. */
+export function validateWorkspaceEvent(
+	snapshot: SnapshotFrom<typeof workspace>,
+	event: EventFrom<typeof workspace>,
+): string | undefined {
+	const context = snapshot.context;
+	if (event.type === "unit.add") return unitAddError(context.units, event);
+	if (event.type === "unit.decide")
+		return unitDecisionError(
+			snapshot.children[getUnitActorId(event.unitId)],
+			event,
+		);
+	if (
+		event.type === "hold.lift" &&
+		!context.holds.some((hold) => hold.id === event.holdId)
+	)
+		return `unknown hold ${event.holdId}`;
+	if (event.type === "task.answer") {
+		const found = Object.values(snapshot.children).some((unit) => {
+			const task = unit?.getSnapshot().children.task?.getSnapshot();
+			return (
+				task?.value === "asking" && task.context.spec.taskId === event.taskId
+			);
+		});
+		if (!found) return `unknown waiting task ${event.taskId}`;
+	}
+	return undefined;
 }
 
 function unitAddError(

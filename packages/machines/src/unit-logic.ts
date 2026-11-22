@@ -47,6 +47,15 @@ export const UnitContext = Schema.Struct({
 });
 export type UnitContext = typeof UnitContext.Type;
 
+const decodeUnitContext = Schema.decodeUnknownOption(UnitContext);
+
+export function readStuckUnitContext(raw: unknown) {
+	const decoded = decodeUnitContext(raw);
+	if (decoded._tag === "Some" && decoded.value.stuck)
+		return { unitId: decoded.value.id, stuck: decoded.value.stuck };
+	return undefined;
+}
+
 export function parkUnit(
 	context: UnitContext,
 	reason: StuckReason,
@@ -273,6 +282,8 @@ export function taskInput(
 			notes: context.notes,
 			prior: input.prior,
 			attemptLimit: context.attemptLimit,
+			effort: step.effort,
+			timeLimitMs: step.timeLimitMs,
 		},
 	};
 }
