@@ -1,7 +1,12 @@
-import { createEffectActor, sendAndAwait } from "@xstate/effect";
+import {
+	createEffectActor,
+	EventRejectedError,
+	sendAndAwait,
+} from "@xstate/effect";
 import { Effect } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
+import { initialTransition } from "xstate";
 import { Workers } from "../src/runner.ts";
 import { smallUnit } from "../src/small-unit.ts";
 import { readUnits, workspace } from "../src/workspace.ts";
@@ -31,6 +36,63 @@ const add = (id: string, deps: string[] = []) => ({
 	maxRounds: 2,
 	interventionCap: 2,
 	attemptLimit: 2,
+});
+
+const noWorkers = { run: () => Effect.die("queued unit should not run") };
+
+test("small-unit dispatch validates the machine selector and defaults attempts", async () => {
+	await Effect.runPromise(
+		Effect.gen(function* () {
+			const actor = yield* createEffectActor(workspace);
+			const { attemptLimit: _, ...queued } = add("small", ["dependency"]);
+			const invalid = {
+				...queued,
+				machine: 1 as unknown as string,
+				attemptLimit: 2,
+			};
+			const result = yield* Effect.result(sendAndAwait(actor, invalid));
+			expect(result._tag).toBe("Failure");
+			if (result._tag === "Failure")
+				expect(result.failure).toBeInstanceOf(EventRejectedError);
+			expect(actor.getSnapshot().context.units).toEqual([]);
+
+			for (const event of [
+				{ ...queued, machine: "small-unit" },
+				{
+					...queued,
+					id: "explicit",
+					machine: "small-unit",
+					attemptLimit: undefined,
+				},
+			]) {
+				yield* sendAndAwait(actor, event);
+				const child = actor.getSnapshot().children[`unit:${event.id}`];
+				expect(child?.src).toBe("smallUnit");
+				expect(child?.getSnapshot().context.attemptLimit).toBe(2);
+			}
+		}).pipe(Effect.scoped, Effect.provideService(Workers, noWorkers)),
+	);
+});
+
+test("fresh small units reject invalid limits before running work", () => {
+	const { type: _, ...queued } = add("small", ["dependency"]);
+	const input = { ...queued, depsPassed: [], depsCancelled: [], holds: [] };
+	const overflow: number = JSON.parse("1e309");
+	for (const field of [
+		"attemptLimit",
+		"maxRounds",
+		"interventionCap",
+	] as const) {
+		for (const value of [Infinity, NaN, "never", overflow]) {
+			const [snapshot, effects] = initialTransition(smallUnit, {
+				...input,
+				[field]: value,
+			});
+			expect(snapshot.status, `${field} = ${String(value)}`).toBe("error");
+			expect(String(snapshot.error)).toContain(field);
+			expect(effects.map(({ type }) => type)).not.toContain("@xstate.spawn");
+		}
+	}
 });
 
 test.each(["unit", "small-unit"] as const)(
