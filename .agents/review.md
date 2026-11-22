@@ -36,6 +36,9 @@ boundary makes each later change propagate through more of the codebase.
 
 ## Correctness and tests
 
+- Require machines and tests to fail in bounded time. Loops and retries need a
+  count or a terminal state. If a mutation hangs, report it as a finding. The
+  suite deadline runs outside Vitest so it can stop a blocked worker.
 - Test decisions with controlled time and scripted workers. Use real process,
   SQLite, and HTTP tests where lifecycle, durability, or wiring is the contract.
 - Pair failure and success cases. For a core regression, temporarily break the
