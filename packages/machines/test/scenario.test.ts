@@ -3,7 +3,7 @@ import { Clock, Effect, References } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { Workers } from "../src/runner.ts";
-import { workspace } from "../src/workspace.ts";
+import { readUnits, workspace } from "../src/workspace.ts";
 import { makeRoutes, script } from "./scenario.ts";
 import { createWorld } from "./workers.ts";
 
@@ -46,6 +46,18 @@ test("three units handle quota, model fallback, rework and a person", async () =
 				});
 			}
 			for (let step = 0; step < 1500; step++) {
+				// Let child notifications settle before inspecting the whole tree.
+				yield* Effect.promise(
+					() => new Promise<void>((resolve) => setImmediate(resolve)),
+				);
+				const unaccounted = readUnits(actor.getSnapshot()).filter(
+					(unit) =>
+						!unit.verdict &&
+						!unit.task &&
+						unit.dependencies.length === 0 &&
+						unit.holds.length === 0,
+				);
+				expect(unaccounted).toEqual([]);
 				const unit = actor.getSnapshot().children["unit:C"];
 				const current = unit?.getSnapshot().children.task?.getSnapshot();
 				if (current?.value === "asking") {

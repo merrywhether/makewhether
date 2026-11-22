@@ -233,6 +233,7 @@ export const UnitAddEvent = Schema.Struct({
 	maxRounds: MaxRounds,
 	interventionCap: InterventionCap,
 	attemptLimit: Schema.optional(AttemptLimit),
+	machine: Schema.optional(Schema.String),
 });
 export const TaskAnswerEvent = Schema.Struct({
 	taskId: Schema.String,
@@ -276,3 +277,11 @@ export const LockRecord = Schema.Struct({
 	port: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 })),
 });
 export type LockRecord = typeof LockRecord.Type;
+
+/** Declared waits and outcome handling for a machine state. */
+export const MachineStateMeta = Schema.Struct({
+	waitsOn: Schema.Literals(["task", "dependency", "hold", "person"]),
+	role: Schema.optional(Schema.String),
+	phase: Schema.optional(Schema.String),
+	handles: Schema.optional(Schema.Array(Schema.String)),
+});

@@ -59,12 +59,27 @@ function isCommandType(value: unknown): value is keyof typeof commandCases {
 	return typeof value === "string" && Object.hasOwn(commandCases, value);
 }
 const [command, ...args] = process.argv.slice(2);
-if (command === "send") {
-	const body = args[0] ?? readFileSync(0, "utf8");
-	let parsed: unknown;
-	let valid = false;
+const deciding = command === "unit" && args[0] === "decide";
+if (command === "send" || deciding) {
+	let body: string | undefined;
 	try {
-		parsed = JSON.parse(body);
+		let parsed: unknown;
+		if (deciding) {
+			const [, unitId, episode, decisionJson] = args;
+			if (unitId === undefined || episode === undefined || args.length > 4)
+				throw new InvalidCommandType(
+					"Usage: makew unit decide <unit-id> <episode> [decision-json]",
+				);
+			parsed = {
+				type: "unit.decide",
+				unitId,
+				episode: Number(episode),
+				decision: JSON.parse(decisionJson ?? readFileSync(0, "utf8")),
+			};
+		} else {
+			body = args[0] ?? readFileSync(0, "utf8");
+			parsed = JSON.parse(body);
+		}
 		// Select the member so invalid literal fields do not hide the other issues in its union.
 		if (typeof parsed !== "object" || parsed == null || Array.isArray(parsed))
 			throw new InvalidCommandType("Expected a command object");
@@ -75,7 +90,7 @@ if (command === "send") {
 		Schema.decodeUnknownSync(commandCases[parsed.type], { errors: "all" })(
 			parsed,
 		);
-		valid = true;
+		body = body ?? JSON.stringify(parsed);
 	} catch (error) {
 		if (error instanceof SyntaxError)
 			process.stderr.write(`Invalid JSON: ${error.message}\n`);
@@ -94,8 +109,9 @@ if (command === "send") {
 			}
 		} else throw error;
 		process.exitCode = 1;
+		body = undefined;
 	}
-	if (valid) {
+	if (body !== undefined) {
 		const inbox = join(dataDir, "inbox");
 		mkdirSync(inbox, { recursive: true });
 		const id = ulid();
@@ -104,6 +120,45 @@ if (command === "send") {
 		renameSync(temp, join(inbox, `${id}.json`));
 		process.stdout.write(`${id}\n`);
 	}
+} else if (
+	command === "unit" &&
+	(args[0] === "ls" || (args[0] === "show" && args[1]))
+) {
+	const owner = readEngineLock();
+	if (!owner) throw new Error("no engine owns this data directory");
+	const endpoint =
+		args[0] === "ls"
+			? "/units"
+			: `/units?${new URLSearchParams({ id: args[1] ?? "" })}`;
+	const response = await fetch(`http://127.0.0.1:${owner.port}${endpoint}`, {
+		signal: AbortSignal.timeout(5000),
+	});
+	if (!response.ok) throw new Error(`unit read failed: ${response.status}`);
+	process.stdout.write(
+		`${JSON.stringify(await response.json(), undefined, 2)}\n`,
+	);
+} else if (command === "replay" && args[0]) {
+	const child = spawn(
+		engine.command,
+		[...engine.prefix, "replay", resolve(args[0])],
+		{ stdio: "inherit", env: { ...process.env, MAKEW_DATA_DIR: dataDir } },
+	);
+	const code = await new Promise<number>((resolveCode, reject) => {
+		child.once("error", reject);
+		child.once("exit", (status) => resolveCode(status ?? 1));
+	});
+	if (code !== 0) process.exitCode = code;
+} else if (command === "machine" && args[0] === "check" && args[1]) {
+	const child = spawn(
+		engine.command,
+		[...engine.prefix, "check", resolve(args[1])],
+		{ stdio: "inherit" },
+	);
+	const code = await new Promise<number>((resolveCode, reject) => {
+		child.once("error", reject);
+		child.once("exit", (status) => resolveCode(status ?? 1));
+	});
+	if (code !== 0) process.exitCode = code;
 } else if (command === "start") {
 	mkdirSync(dataDir, { recursive: true });
 	let child: ReturnType<typeof spawn> | undefined;
@@ -194,4 +249,7 @@ if (command === "send") {
 		if (readEngineLock()?.token === owner.token)
 			throw new Error("engine did not release its lock");
 	}
-} else throw new Error("usage: makew start|stop|send");
+} else
+	throw new Error(
+		"usage: makew start|stop|send|unit ls|unit show|unit decide|replay|machine check",
+	);

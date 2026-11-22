@@ -7,6 +7,7 @@ import {
 } from "@makewhether/domain";
 import { Schema } from "effect";
 import type { Snapshot } from "xstate";
+import { smallUnit } from "./small-unit.ts";
 import { unit } from "./unit.ts";
 import { getTaskId, parkUnit, phaseState, UnitContext } from "./unit-logic.ts";
 import { getUnitActorId, parseUnitActorId } from "./workspace.ts";
@@ -71,7 +72,7 @@ function parkReason(
 	entry: SavedUnit,
 	context: UnitContext,
 ): StuckReason | undefined {
-	const { id, deps, saved } = entry;
+	const { id, deps, saved, child } = entry;
 	const mismatchedRegistration =
 		context.id !== id ||
 		context.deps.length !== deps.length ||
@@ -98,10 +99,12 @@ function parkReason(
 	if (!hasPersonFinalTier(context.routes)) return "invalid-final-tier";
 	if (saved.value === "queued") return undefined;
 	const phase = saved.value;
-	if (!isPhase(phase)) return "invalid-task-state";
+	const machine = child.src === "smallUnit" ? smallUnit : unit;
+	if (!isPhase(phase) || (phase === "judge" && machine === smallUnit))
+		return "invalid-task-state";
 
 	const input = decodePhaseInput(
-		record(saved.stateInputs)?.[`${unit.id}.${phase}`],
+		record(saved.stateInputs)?.[`${machine.id}.${phase}`],
 	);
 	const step =
 		input._tag === "Some" ? context.routes[phase][input.value.tier] : undefined;
@@ -140,11 +143,11 @@ export function prepareWorkspaceCheckpoint(snapshot: Snapshot<unknown>) {
 	const children: Record<string, unknown> = {};
 	const parked: { unitId: string; stuck: typeof StuckUnit.Type }[] = [];
 	for (const entry of checkpointUnits(snapshot)) {
-		const machine = unit;
+		const machine = entry.child.src === "smallUnit" ? smallUnit : unit;
 		const identity = record(entry.saved.machine);
 		const version = identity?.version ?? entry.saved.version;
 		if (
-			entry.child.src !== "unit" ||
+			(entry.child.src !== "unit" && entry.child.src !== "smallUnit") ||
 			(identity?.id !== undefined && identity.id !== machine.id) ||
 			version !== machine.version ||
 			(entry.saved.version !== undefined && entry.saved.version !== version)
@@ -174,9 +177,11 @@ export function prepareWorkspaceCheckpoint(snapshot: Snapshot<unknown>) {
 			reason,
 		);
 		parked.push({ unitId: entry.id, stuck: next.context.stuck });
-		const replacement = unit.getPersistedSnapshot(
-			unit.resolveState({ value: next.target, context: next.context }),
-		);
+		const stuck = { value: next.target, context: next.context };
+		const replacement =
+			machine === smallUnit
+				? smallUnit.getPersistedSnapshot(smallUnit.resolveState(stuck))
+				: unit.getPersistedSnapshot(unit.resolveState(stuck));
 		children[entry.key] = { ...entry.child, snapshot: replacement };
 	}
 	return {

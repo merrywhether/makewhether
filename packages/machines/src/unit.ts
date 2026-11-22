@@ -1,6 +1,7 @@
 import {
 	Hold,
 	hasPersonFinalTier,
+	MachineStateMeta,
 	Outcome,
 	UnitDecisionEvent,
 } from "@makewhether/domain";
@@ -27,6 +28,7 @@ export type { UnitInput } from "./unit-logic.ts";
 
 export const unit = setupEffect({
 	schemas: {
+		meta: MachineStateMeta,
 		input: UnitInput,
 		context: UnitContext,
 		events: {
@@ -95,6 +97,7 @@ export const unit = setupEffect({
 	},
 	states: {
 		queued: {
+			meta: { waitsOn: "dependency" },
 			always: ({ context }) => {
 				const cancelled = context.depsCancelled[0];
 				if (cancelled !== undefined)
@@ -109,6 +112,12 @@ export const unit = setupEffect({
 			on: unitDependencyTransitions,
 		},
 		implement: {
+			meta: {
+				waitsOn: "task",
+				role: "implement",
+				phase: "implement",
+				handles: ["done", "up"],
+			},
 			invoke: {
 				id: "task",
 				src: "task",
@@ -120,6 +129,12 @@ export const unit = setupEffect({
 			},
 		},
 		verify: {
+			meta: {
+				waitsOn: "task",
+				role: "verify",
+				phase: "verify",
+				handles: ["pass", "fail", "up"],
+			},
 			invoke: {
 				id: "task",
 				src: "task",
@@ -132,6 +147,12 @@ export const unit = setupEffect({
 			},
 		},
 		judge: {
+			meta: {
+				waitsOn: "task",
+				role: "judge",
+				phase: "judge",
+				handles: ["pass", "findings", "up"],
+			},
 			invoke: {
 				id: "task",
 				src: "task",
@@ -150,6 +171,12 @@ export const unit = setupEffect({
 				!hasPersonFinalTier(context.routes)
 					? parkUnit(context, "invalid-final-tier")
 					: undefined,
+			meta: {
+				waitsOn: "task",
+				role: "intervene",
+				phase: "intervene",
+				handles: ["decision", "up"],
+			},
 			invoke: {
 				id: "task",
 				src: "task",
@@ -161,6 +188,7 @@ export const unit = setupEffect({
 			},
 		},
 		stuck: {
+			meta: { waitsOn: "person" },
 			on: {
 				...unitDependencyTransitions,
 				"unit.decide": ({ context, event }) =>

@@ -17,6 +17,7 @@ import {
 	prepareWorkspaceCheckpoint,
 	readCheckpointStuckUnits,
 	readStuckUnitContext,
+	unitMachineNames,
 	validateWorkspaceEvent,
 	Workers,
 	workspace,
@@ -34,6 +35,8 @@ const StartedContext = Schema.Struct({
 	spec: TaskSpec,
 	worker: Schema.UndefinedOr(Worker),
 });
+const isUnitMachine = (value: string) =>
+	unitMachineNames.some((name) => name === value);
 const decodeCommand = Schema.decodeUnknownSync(InboxCommand);
 const decodeStartedContext = Schema.decodeUnknownSync(StartedContext);
 
@@ -95,6 +98,7 @@ function getEvent(
 		case "unit.add": {
 			return {
 				type: "unit.add" as const,
+				machine: command.machine,
 				id: command.id ?? key,
 				title: command.brief,
 				repo: command.repo,
@@ -307,7 +311,7 @@ export const openEngine = (options: Options) =>
 						status = "rejected";
 						body = JSON.stringify({ input: body, error: String(error) });
 					}
-					if (command?.type === "unit.add" && command.machine !== "unit") {
+					if (command?.type === "unit.add" && !isUnitMachine(command.machine)) {
 						status = "rejected";
 						body = JSON.stringify({
 							input: body,
