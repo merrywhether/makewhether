@@ -7,17 +7,53 @@ import { getUnitSettings, loadSettings } from "../src/index.ts";
 test("loads and validates a TypeScript settings module", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "makew-config-"));
 	try {
-		expect((await loadSettings(undefined)).attemptLimit).toBe(2);
+		expect(await loadSettings(undefined)).toMatchObject({
+			attemptLimit: 2,
+			maxRounds: 2,
+			interventionCap: 2,
+		});
 		const file = join(dir, "settings.ts");
-		const settings = { ...getUnitSettings(), maxRounds: 7, attemptLimit: 4 };
+		const settings = {
+			...getUnitSettings(),
+			attemptLimit: 1,
+			maxRounds: 1,
+			interventionCap: 0,
+		};
 		writeFileSync(file, `export default ${JSON.stringify(settings)};`);
 		expect(await loadSettings(file)).toEqual(settings);
-		const invalid = join(dir, "invalid.ts");
-		writeFileSync(
-			invalid,
-			`export default ${JSON.stringify({ ...settings, attemptLimit: 0 })};`,
-		);
-		await expect(loadSettings(invalid)).rejects.toThrow();
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("settings reject limits outside the supported integer ranges", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "makew-config-"));
+	try {
+		for (const [field, belowMinimum] of [
+			["attemptLimit", 0],
+			["maxRounds", 0],
+			["interventionCap", -1],
+		] as const) {
+			for (const [index, source] of [
+				"Infinity",
+				"NaN",
+				'"never"',
+				'JSON.parse("1e309")',
+				"1.5",
+				"Number.MAX_SAFE_INTEGER + 1",
+				belowMinimum,
+			].entries()) {
+				const file = join(dir, `${field}-${index}.ts`);
+				writeFileSync(
+					file,
+					`export default { ...${JSON.stringify(getUnitSettings())}, ${field}: ${source} };`,
+				);
+				await expect(
+					loadSettings(file),
+					`${field} = ${source}`,
+				).rejects.toThrow(field);
+			}
+		}
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

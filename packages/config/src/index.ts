@@ -1,6 +1,12 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Routes } from "@makewhether/domain";
+import {
+	AttemptLimit,
+	defaultAttemptLimit,
+	InterventionCap,
+	MaxRounds,
+	Routes,
+} from "@makewhether/domain";
 import { Schema } from "effect";
 
 const worker = { harness: "codex", model: "fake", account: "fake" } as const;
@@ -13,9 +19,9 @@ const tier = { tier: "fake", workers: [worker] as const, rules: {} };
 
 export const UnitSettings = Schema.Struct({
 	routes: Routes,
-	maxRounds: Schema.Int.check(Schema.isGreaterThan(0)),
-	interventionCap: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-	attemptLimit: Schema.Int.check(Schema.isGreaterThan(0)),
+	maxRounds: MaxRounds,
+	interventionCap: InterventionCap,
+	attemptLimit: AttemptLimit,
 });
 export type UnitSettings = typeof UnitSettings.Type;
 
@@ -30,7 +36,7 @@ export function getUnitSettings(): UnitSettings {
 		},
 		maxRounds: 2,
 		interventionCap: 2,
-		attemptLimit: 2,
+		attemptLimit: defaultAttemptLimit,
 	};
 }
 
