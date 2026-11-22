@@ -1,6 +1,6 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.6.7/schema.json",
-	"files": { "includes": ["**", "!!.moon/cache", "!!node_modules"] },
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
 	"plugins": ["./no-null.grit"],
 	"markdown": { "formatter": { "proseWrap": "always" } },
 	"linter": {
